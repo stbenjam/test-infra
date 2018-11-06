@@ -74,6 +74,9 @@ func main() {
 		logrus.WithError(err).Fatal("Error getting git client.")
 	}
 
+	botname, _ := githubClient.BotName()
+	gitClient.SetCredentials(botname, secretAgent.GetTokenGenerator(*githubTokenFile))
+
 	server := NewServer(secretAgent.GetTokenGenerator(*webhookSecretFile), gitClient, githubClient, configAgent)
 
 	http.Handle("/", server)
