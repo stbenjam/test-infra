@@ -23,32 +23,33 @@ import (
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/test-infra/prow/github"
+	"k8s.io/test-infra/prow/labels"
 	"k8s.io/test-infra/prow/plugins"
 )
 
 type fakeGitHub struct {
-	labels                     sets.String
-	labelsAdded, labelsRemoved sets.String
-	commented                  bool
+	labels                               sets.String
+	IssueLabelsAdded, IssueLabelsRemoved sets.String
+	commented                            bool
 }
 
 func newFakeGitHub(initialLabels ...string) *fakeGitHub {
 	return &fakeGitHub{
-		labels:        sets.NewString(initialLabels...),
-		labelsAdded:   sets.NewString(),
-		labelsRemoved: sets.NewString(),
+		labels:             sets.NewString(initialLabels...),
+		IssueLabelsAdded:   sets.NewString(),
+		IssueLabelsRemoved: sets.NewString(),
 	}
 }
 
 func (f *fakeGitHub) AddLabel(org, repo string, number int, label string) error {
 	f.labels.Insert(label)
-	f.labelsAdded.Insert(label)
+	f.IssueLabelsAdded.Insert(label)
 	return nil
 }
 
 func (f *fakeGitHub) RemoveLabel(org, repo string, number int, label string) error {
 	f.labels.Delete(label)
-	f.labelsRemoved.Insert(label)
+	f.IssueLabelsRemoved.Insert(label)
 	return nil
 }
 
@@ -76,7 +77,7 @@ func TestHandle(t *testing.T) {
 			Org:          "k8s",
 			Issues:       true,
 			Re:           regexp.MustCompile(`^(sig|wg|committee)/`),
-			MissingLabel: "needs-sig",
+			MissingLabel: labels.NeedsSig,
 		},
 
 		// needs-kind over k8s/t-i repo (PRs)
@@ -116,7 +117,7 @@ func TestHandle(t *testing.T) {
 				repo:   "k8s",
 				branch: "foo",
 			},
-			initialLabels: []string{"lgtm"},
+			initialLabels: []string{labels.LGTM},
 		},
 		{
 			name: "ignore wrong org",
@@ -124,7 +125,7 @@ func TestHandle(t *testing.T) {
 				org:  "fejtaverse",
 				repo: "repo",
 			},
-			initialLabels: []string{"lgtm"},
+			initialLabels: []string{labels.LGTM},
 		},
 		{
 			name: "ignore unrelated label change",
@@ -134,7 +135,7 @@ func TestHandle(t *testing.T) {
 				branch: "master",
 				label:  "unrelated",
 			},
-			initialLabels: []string{"lgtm"},
+			initialLabels: []string{labels.LGTM},
 		},
 		{
 			name: "add needs-kind label to PR",
@@ -143,7 +144,7 @@ func TestHandle(t *testing.T) {
 				repo:   "t-i",
 				branch: "master",
 			},
-			initialLabels: []string{"lgtm"},
+			initialLabels: []string{labels.LGTM},
 			expectedAdded: sets.NewString("needs-kind"),
 		},
 		{
@@ -154,7 +155,7 @@ func TestHandle(t *testing.T) {
 				branch: "master",
 				label:  "kind/best",
 			},
-			initialLabels:   []string{"lgtm", "needs-kind", "kind/best"},
+			initialLabels:   []string{labels.LGTM, "needs-kind", "kind/best"},
 			expectedRemoved: sets.NewString("needs-kind"),
 		},
 		{
@@ -164,7 +165,7 @@ func TestHandle(t *testing.T) {
 				repo:  "t-i",
 				label: "kind/best",
 			},
-			initialLabels: []string{"lgtm", "needs-kind", "kind/best", "sig/cats"},
+			initialLabels: []string{labels.LGTM, "needs-kind", "kind/best", "sig/cats"},
 		},
 		{
 			name: "don't remove needs-kind label from PR already missing it",
@@ -174,7 +175,7 @@ func TestHandle(t *testing.T) {
 				branch: "master",
 				label:  "kind/best",
 			},
-			initialLabels: []string{"lgtm", "kind/best"},
+			initialLabels: []string{labels.LGTM, "kind/best"},
 		},
 		{
 			name: "add org scoped needs-sig to issue",
@@ -183,8 +184,8 @@ func TestHandle(t *testing.T) {
 				repo:  "k8s",
 				label: "sig/bash",
 			},
-			initialLabels: []string{"lgtm", "kind/best"},
-			expectedAdded: sets.NewString("needs-sig"),
+			initialLabels: []string{labels.LGTM, "kind/best"},
+			expectedAdded: sets.NewString(labels.NeedsSig),
 		},
 		{
 			name: "don't add org scoped needs-sig to issue when another sig/* label remains",
@@ -193,7 +194,7 @@ func TestHandle(t *testing.T) {
 				repo:  "k8s",
 				label: "sig/bash",
 			},
-			initialLabels: []string{"lgtm", "kind/best", "wg/foo"},
+			initialLabels: []string{labels.LGTM, "kind/best", "wg/foo"},
 		},
 		{
 			name: "add branch scoped needs-cat to issue",
@@ -202,7 +203,7 @@ func TestHandle(t *testing.T) {
 				repo:  "t-i",
 				label: "cat",
 			},
-			initialLabels: []string{"lgtm", "wg/foo"},
+			initialLabels: []string{labels.LGTM, "wg/foo"},
 			expectedAdded: sets.NewString("needs-cat"),
 			expectComment: true,
 		},
@@ -213,7 +214,7 @@ func TestHandle(t *testing.T) {
 				repo:   "t-i",
 				branch: "meow",
 			},
-			initialLabels: []string{"lgtm", "kind/best"},
+			initialLabels: []string{labels.LGTM, "kind/best"},
 			expectedAdded: sets.NewString("needs-cat"),
 			expectComment: true,
 		},
@@ -224,7 +225,7 @@ func TestHandle(t *testing.T) {
 				repo:   "t-i",
 				branch: "meow",
 			},
-			initialLabels:   []string{"lgtm", "needs-cat", "cat", "floof"},
+			initialLabels:   []string{labels.LGTM, "needs-cat", "cat", "floof"},
 			expectedAdded:   sets.NewString("needs-kind"),
 			expectedRemoved: sets.NewString("needs-cat"),
 		},
@@ -234,9 +235,9 @@ func TestHandle(t *testing.T) {
 				org:  "k8s",
 				repo: "t-i",
 			},
-			initialLabels:   []string{"lgtm", "needs-sig", "wg/foo"},
+			initialLabels:   []string{labels.LGTM, labels.NeedsSig, "wg/foo"},
 			expectedAdded:   sets.NewString("needs-cat"),
-			expectedRemoved: sets.NewString("needs-sig"),
+			expectedRemoved: sets.NewString(labels.NeedsSig),
 			expectComment:   true,
 		},
 	}
@@ -255,12 +256,12 @@ func TestHandle(t *testing.T) {
 			t.Error("Expected no comments to be created but got one.")
 		}
 
-		if !tc.expectedAdded.Equal(fghc.labelsAdded) {
-			t.Errorf("Expected the %q labels to be added, but got %q.", tc.expectedAdded.List(), fghc.labelsAdded.List())
+		if !tc.expectedAdded.Equal(fghc.IssueLabelsAdded) {
+			t.Errorf("Expected the %q labels to be added, but got %q.", tc.expectedAdded.List(), fghc.IssueLabelsAdded.List())
 		}
 
-		if !tc.expectedRemoved.Equal(fghc.labelsRemoved) {
-			t.Errorf("Expected the %q labels to be removed, but got %q.", tc.expectedRemoved.List(), fghc.labelsRemoved.List())
+		if !tc.expectedRemoved.Equal(fghc.IssueLabelsRemoved) {
+			t.Errorf("Expected the %q labels to be removed, but got %q.", tc.expectedRemoved.List(), fghc.IssueLabelsRemoved.List())
 		}
 	}
 }

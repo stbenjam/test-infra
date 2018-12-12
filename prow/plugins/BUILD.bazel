@@ -29,12 +29,13 @@ go_library(
         "//prow/git:go_default_library",
         "//prow/github:go_default_library",
         "//prow/kube:go_default_library",
+        "//prow/labels:go_default_library",
         "//prow/pluginhelp:go_default_library",
         "//prow/repoowners:go_default_library",
         "//prow/slack:go_default_library",
-        "//vendor/github.com/ghodss/yaml:go_default_library",
         "//vendor/github.com/sirupsen/logrus:go_default_library",
         "//vendor/k8s.io/apimachinery/pkg/util/sets:go_default_library",
+        "//vendor/sigs.k8s.io/yaml:go_default_library",
     ],
 )
 
@@ -57,6 +58,7 @@ filegroup(
         "//prow/plugins/cat:all-srcs",
         "//prow/plugins/cherrypickunapproved:all-srcs",
         "//prow/plugins/cla:all-srcs",
+        "//prow/plugins/dco:all-srcs",
         "//prow/plugins/docs-no-retest:all-srcs",
         "//prow/plugins/dog:all-srcs",
         "//prow/plugins/golint:all-srcs",

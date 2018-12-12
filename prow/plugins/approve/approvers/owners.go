@@ -86,6 +86,9 @@ func (o Owners) GetAllPotentialApprovers() []string {
 		}
 	}
 	sort.Strings(approversOnly)
+	if len(approversOnly) == 0 {
+		o.log.Debug("No potential approvers exist. Does the repo have OWNERS files?")
+	}
 	return approversOnly
 }
 
@@ -130,6 +133,9 @@ func (o Owners) temporaryUnapprovedFiles(approvers sets.String) sets.String {
 // KeepCoveringApprovers finds who we should keep as suggested approvers given a pre-selection
 // knownApprovers must be a subset of potentialApprovers.
 func (o Owners) KeepCoveringApprovers(reverseMap map[string]sets.String, knownApprovers sets.String, potentialApprovers []string) sets.String {
+	if len(potentialApprovers) == 0 {
+		o.log.Debug("No potential approvers exist to filter for relevance. Does this repo have OWNERS files?")
+	}
 	keptApprovers := sets.NewString()
 
 	unapproved := o.temporaryUnapprovedFiles(knownApprovers)
@@ -303,7 +309,7 @@ func (ap *Approvers) AddApprover(login, reference string, noIssue bool) {
 	}
 }
 
-// AddSAuthorSelfApprover adds the author self approval
+// AddAuthorSelfApprover adds the author self approval
 func (ap *Approvers) AddAuthorSelfApprover(login, reference string, noIssue bool) {
 	if ap.shouldNotOverrideApproval(login, noIssue) {
 		return
@@ -414,7 +420,7 @@ func (ap Approvers) UnapprovedFiles() sets.String {
 	return unapproved
 }
 
-// UnapprovedFiles returns owners files that still need approval
+// GetFiles returns owners files that still need approval
 func (ap Approvers) GetFiles(org, project, branch string) []File {
 	allOwnersFiles := []File{}
 	filesApprovers := ap.GetFilesApprovers()
@@ -445,11 +451,11 @@ func (ap Approvers) GetFiles(org, project, branch string) []File {
 // it works:
 // - We find suggested approvers from all potential approvers, but
 // remove those that are not useful considering current approvers and
-// assignees. This only uses leave approvers to find approvers the
-// closest to the changes.
-// - We find a subset of suggested approvers from from current
-// approvers, suggested approvers and assignees, but we remove thoses
-// that are not useful considering suggestd approvers and current
+// assignees. This only uses leaf approvers to find the closest
+// approvers to the changes.
+// - We find a subset of suggested approvers from current
+// approvers, suggested approvers and assignees, but we remove those
+// that are not useful considering suggested approvers and current
 // approvers. This uses the full approvers list, and will result in root
 // approvers to be suggested when they are assigned.
 // We return the union of the two sets: suggested and suggested
@@ -569,7 +575,7 @@ func GenerateTemplate(templ, name string, data interface{}) (string, error) {
 	return buf.String(), nil
 }
 
-// getMessage returns the comment body that we want the approve plugin to display on PRs
+// GetMessage returns the comment body that we want the approve plugin to display on PRs
 // The comment shows:
 // 	- a list of approvers files (and links) needed to get the PR approved
 // 	- a list of approvers files with strikethroughs that already have an approver's approval

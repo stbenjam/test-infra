@@ -52,46 +52,104 @@ func (f *fkc) CreateProwJob(pj kube.ProwJob) (kube.ProwJob, error) {
 
 type fgc struct{}
 
-func (f *fgc) QueryChanges(lastUpdate time.Time, rateLimit int) map[string][]gerrit.ChangeInfo {
+func (f *fgc) QueryChanges(lastUpdate time.Time, rateLimit int) map[string][]client.ChangeInfo {
 	return nil
 }
 
-func (f *fgc) SetReview(instance, id, revision, message string) error {
+func (f *fgc) SetReview(instance, id, revision, message string, labels map[string]string) error {
 	return nil
+}
+
+func (f *fgc) GetBranchRevision(instance, project, branch string) (string, error) {
+	return "abc", nil
+}
+
+func TestMakeCloneURI(t *testing.T) {
+	cases := []struct {
+		name     string
+		instance string
+		project  string
+		expected string
+		err      bool
+	}{
+		{
+			name:     "happy case",
+			instance: "https://android.googlesource.com",
+			project:  "platform/build",
+			expected: "https://android.googlesource.com/platform/build",
+		},
+		{
+			name:     "reject non urls",
+			instance: "!!!://",
+			project:  "platform/build",
+			err:      true,
+		},
+		{
+			name:     "require instance to specify host",
+			instance: "android.googlesource.com",
+			project:  "platform/build",
+			err:      true,
+		},
+		{
+			name:     "reject instances with paths",
+			instance: "https://android.googlesource.com/platform",
+			project:  "build",
+			err:      true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual, err := makeCloneURI(tc.instance, tc.project)
+			switch {
+			case err != nil:
+				if !tc.err {
+					t.Errorf("unexpected error: %v", err)
+				}
+			case tc.err:
+				t.Error("failed to receive expected exception")
+			case actual.String() != tc.expected:
+				t.Errorf("actual %q != expected %q", actual.String(), tc.expected)
+			}
+		})
+	}
 }
 
 func TestProcessChange(t *testing.T) {
 	var testcases = []struct {
 		name        string
-		change      gerrit.ChangeInfo
+		change      client.ChangeInfo
 		numPJ       int
 		pjRef       string
 		shouldError bool
 	}{
 		{
 			name: "no revisions",
-			change: gerrit.ChangeInfo{
+			change: client.ChangeInfo{
 				CurrentRevision: "1",
 				Project:         "test-infra",
+				Status:          "NEW",
 			},
 			shouldError: true,
 		},
 		{
 			name: "wrong project",
-			change: gerrit.ChangeInfo{
+			change: client.ChangeInfo{
 				CurrentRevision: "1",
 				Project:         "woof",
-				Revisions: map[string]gerrit.RevisionInfo{
+				Status:          "NEW",
+				Revisions: map[string]client.RevisionInfo{
 					"1": {},
 				},
 			},
 		},
 		{
 			name: "normal",
-			change: gerrit.ChangeInfo{
+			change: client.ChangeInfo{
 				CurrentRevision: "1",
 				Project:         "test-infra",
-				Revisions: map[string]gerrit.RevisionInfo{
+				Status:          "NEW",
+				Revisions: map[string]client.RevisionInfo{
 					"1": {
 						Ref: "refs/changes/00/1/1",
 					},
@@ -102,10 +160,11 @@ func TestProcessChange(t *testing.T) {
 		},
 		{
 			name: "multiple revisions",
-			change: gerrit.ChangeInfo{
+			change: client.ChangeInfo{
 				CurrentRevision: "2",
 				Project:         "test-infra",
-				Revisions: map[string]gerrit.RevisionInfo{
+				Status:          "NEW",
+				Revisions: map[string]client.RevisionInfo{
 					"1": {
 						Ref: "refs/changes/00/2/1",
 					},
@@ -117,16 +176,126 @@ func TestProcessChange(t *testing.T) {
 			numPJ: 1,
 			pjRef: "refs/changes/00/2/2",
 		},
+		{
+			name: "other-test-with-https",
+			change: client.ChangeInfo{
+				CurrentRevision: "1",
+				Project:         "other-repo",
+				Status:          "NEW",
+				Revisions: map[string]client.RevisionInfo{
+					"1": {
+						Ref: "refs/changes/00/1/1",
+					},
+				},
+			},
+			numPJ: 1,
+			pjRef: "refs/changes/00/1/1",
+		},
+		{
+			name: "merged change should trigger postsubmit",
+			change: client.ChangeInfo{
+				CurrentRevision: "1",
+				Project:         "postsubmits-project",
+				Status:          "MERGED",
+				Revisions: map[string]client.RevisionInfo{
+					"1": {
+						Ref: "refs/changes/00/1/1",
+					},
+				},
+			},
+			numPJ: 1,
+			pjRef: "refs/changes/00/1/1",
+		},
+		{
+			name: "merged change on project without postsubmits",
+			change: client.ChangeInfo{
+				CurrentRevision: "1",
+				Project:         "test-infra",
+				Status:          "MERGED",
+				Revisions: map[string]client.RevisionInfo{
+					"1": {
+						Ref: "refs/changes/00/1/1",
+					},
+				},
+			},
+		},
+		{
+			name: "presubmit runs when a file matches run_if_changed",
+			change: client.ChangeInfo{
+				CurrentRevision: "1",
+				Project:         "test-infra",
+				Status:          "NEW",
+				Revisions: map[string]client.RevisionInfo{
+					"1": {
+						Files: map[string]client.FileInfo{
+							"bee-movie-script.txt": {},
+							"africa-lyrics.txt":    {},
+							"important-code.go":    {},
+						},
+					},
+				},
+			},
+			numPJ: 2,
+		},
+		{
+			name: "presubmit doesn't run when no files match run_if_changed",
+			change: client.ChangeInfo{
+				CurrentRevision: "1",
+				Project:         "test-infra",
+				Status:          "NEW",
+				Revisions: map[string]client.RevisionInfo{
+					"1": {
+						Files: map[string]client.FileInfo{
+							"hacky-hack.sh": {},
+							"README.md":     {},
+							"let-it-go.txt": {},
+						},
+					},
+				},
+			},
+			numPJ: 1,
+		},
 	}
 
 	for _, tc := range testcases {
+		testInfraPresubmits := []config.Presubmit{
+			{
+				JobBase: config.JobBase{
+					Name: "test-foo",
+				},
+			},
+			{
+				JobBase: config.JobBase{
+					Name: "test-go",
+				},
+				RegexpChangeMatcher: config.RegexpChangeMatcher{
+					RunIfChanged: "\\.go",
+				},
+			},
+		}
+		if err := config.SetPresubmitRegexes(testInfraPresubmits); err != nil {
+			t.Fatalf("could not set regexes: %v", err)
+		}
+
 		fca := &fca{
 			c: &config.Config{
 				JobConfig: config.JobConfig{
 					Presubmits: map[string][]config.Presubmit{
-						"gerrit/test-infra": {
+						"gerrit/test-infra": testInfraPresubmits,
+						"https://gerrit/other-repo": {
 							{
-								Name: "test-foo",
+								JobBase: config.JobBase{
+									Name: "other-test",
+								},
+							},
+						},
+					},
+					Postsubmits: map[string][]config.Postsubmit{
+						"gerrit/postsubmits-project": {
+							{
+								JobBase: config.JobBase{
+									Name: "test-bar",
+								},
 							},
 						},
 					},
@@ -142,7 +311,7 @@ func TestProcessChange(t *testing.T) {
 			gc: &fgc{},
 		}
 
-		err := c.ProcessChange("gerrit", tc.change)
+		err := c.ProcessChange("https://gerrit", tc.change)
 		if err != nil && !tc.shouldError {
 			t.Errorf("tc %s, expect no error, but got %v", tc.name, err)
 			continue
@@ -156,8 +325,18 @@ func TestProcessChange(t *testing.T) {
 		}
 
 		if len(fkc.prowjobs) > 0 {
+			refs := fkc.prowjobs[0].Spec.Refs
+			if refs.Org != "gerrit" {
+				t.Errorf("%s: org %s != gerrit", tc.name, refs.Org)
+			}
+			if refs.Repo != tc.change.Project {
+				t.Errorf("%s: repo %s != expected %s", tc.name, refs.Repo, tc.change.Project)
+			}
 			if fkc.prowjobs[0].Spec.Refs.Pulls[0].Ref != tc.pjRef {
 				t.Errorf("tc %s - ref should be %s, got %s", tc.name, tc.pjRef, fkc.prowjobs[0].Spec.Refs.Pulls[0].Ref)
+			}
+			if fkc.prowjobs[0].Spec.Refs.BaseSHA != "abc" {
+				t.Errorf("tc %s - BaseSHA should be abc, got %s", tc.name, fkc.prowjobs[0].Spec.Refs.BaseSHA)
 			}
 		}
 	}

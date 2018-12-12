@@ -24,6 +24,7 @@ import (
 
 	"k8s.io/test-infra/prow/github"
 	"k8s.io/test-infra/prow/github/fakegithub"
+	"k8s.io/test-infra/prow/labels"
 )
 
 func TestHandle(t *testing.T) {
@@ -91,20 +92,20 @@ func TestHandle(t *testing.T) {
 			continue
 		}
 
-		fakeLabel := fmt.Sprintf("org/repo#1:%s", Label)
+		fakeLabel := fmt.Sprintf("org/repo#1:%s", labels.Hold)
 		if tc.shouldLabel {
-			if len(fc.LabelsAdded) != 1 || fc.LabelsAdded[0] != fakeLabel {
-				t.Errorf("For case %s: expected to add %q Label but instead added: %v", tc.name, Label, fc.LabelsAdded)
+			if len(fc.IssueLabelsAdded) != 1 || fc.IssueLabelsAdded[0] != fakeLabel {
+				t.Errorf("For case %s: expected to add %q Label but instead added: %v", tc.name, labels.Hold, fc.IssueLabelsAdded)
 			}
-		} else if len(fc.LabelsAdded) > 0 {
-			t.Errorf("For case %s, expected to not add %q Label but added: %v", tc.name, Label, fc.LabelsAdded)
+		} else if len(fc.IssueLabelsAdded) > 0 {
+			t.Errorf("For case %s, expected to not add %q Label but added: %v", tc.name, labels.Hold, fc.IssueLabelsAdded)
 		}
 		if tc.shouldUnlabel {
-			if len(fc.LabelsRemoved) != 1 || fc.LabelsRemoved[0] != fakeLabel {
-				t.Errorf("For case %s: expected to remove %q Label but instead removed: %v", tc.name, Label, fc.LabelsRemoved)
+			if len(fc.IssueLabelsRemoved) != 1 || fc.IssueLabelsRemoved[0] != fakeLabel {
+				t.Errorf("For case %s: expected to remove %q Label but instead removed: %v", tc.name, labels.Hold, fc.IssueLabelsRemoved)
 			}
-		} else if len(fc.LabelsRemoved) > 0 {
-			t.Errorf("For case %s, expected to not remove %q Label but removed: %v", tc.name, Label, fc.LabelsRemoved)
+		} else if len(fc.IssueLabelsRemoved) > 0 {
+			t.Errorf("For case %s, expected to not remove %q Label but removed: %v", tc.name, labels.Hold, fc.IssueLabelsRemoved)
 		}
 	}
 }

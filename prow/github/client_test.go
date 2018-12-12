@@ -86,6 +86,27 @@ func TestRequestRateLimit(t *testing.T) {
 	}
 }
 
+func TestAbuseRateLimit(t *testing.T) {
+	tc := &testTime{now: time.Now()}
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if tc.slept == 0 {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "403 Forbidden", http.StatusForbidden)
+		}
+	}))
+	defer ts.Close()
+	c := getClient(ts.URL)
+	c.time = tc
+	resp, err := c.requestRetry(http.MethodGet, "/", "", nil)
+	if err != nil {
+		t.Errorf("Error from request: %v", err)
+	} else if resp.StatusCode != 200 {
+		t.Errorf("Expected status code 200, got %d", resp.StatusCode)
+	} else if tc.slept < time.Second {
+		t.Errorf("Expected to sleep for at least a second, got %v", tc.slept)
+	}
+}
+
 func TestRetry404(t *testing.T) {
 	tc := &testTime{now: time.Now()}
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -312,11 +333,37 @@ func TestGetRef(t *testing.T) {
 	}))
 	defer ts.Close()
 	c := getClient(ts.URL)
-	sha, err := c.GetRef("k8s", "kuber", "heads/mastah")
+	SHA, err := c.GetRef("k8s", "kuber", "heads/mastah")
 	if err != nil {
 		t.Errorf("Didn't expect error: %v", err)
-	} else if sha != "abcde" {
-		t.Errorf("Wrong sha: %s", sha)
+	} else if SHA != "abcde" {
+		t.Errorf("Wrong SHA: %s", SHA)
+	}
+}
+
+func TestGetSingleCommit(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("Bad method: %s", r.Method)
+		}
+		if r.URL.Path != "/repos/octocat/Hello-World/commits/6dcb09b5b57875f334f61aebed695e2e4193db5e" {
+			t.Errorf("Bad request path: %s", r.URL.Path)
+		}
+		fmt.Fprint(w, `{
+			"commit": {
+			  "tree": {
+				"sha": "6dcb09b5b57875f334f61aebed695e2e4193db5e"
+			  }
+		        }
+		  }`)
+	}))
+	defer ts.Close()
+	c := getClient(ts.URL)
+	commit, err := c.GetSingleCommit("octocat", "Hello-World", "6dcb09b5b57875f334f61aebed695e2e4193db5e")
+	if err != nil {
+		t.Errorf("Didn't expect error: %v", err)
+	} else if commit.Commit.Tree.SHA != "6dcb09b5b57875f334f61aebed695e2e4193db5e" {
+		t.Errorf("Wrong tree-hash: %s", commit.Commit.Tree.SHA)
 	}
 }
 
@@ -1598,5 +1645,66 @@ func TestListMilestones(t *testing.T) {
 	c := getClient(ts.URL)
 	if err, _ := c.ListMilestones("k8s", "kuber"); err != nil {
 		t.Errorf("Didn't expect error: %v", err)
+	}
+}
+
+func TestListPRCommits(t *testing.T) {
+	ts := simpleTestServer(t, "/repos/theorg/therepo/pulls/3/commits",
+		[]RepositoryCommit{
+			{SHA: "sha"},
+			{SHA: "sha2"},
+		})
+	defer ts.Close()
+	c := getClient(ts.URL)
+	if commits, err := c.ListPRCommits("theorg", "therepo", 3); err != nil {
+		t.Errorf("Didn't expect error: %v", err)
+	} else {
+		if len(commits) != 2 {
+			t.Errorf("Expected 2 commits to be returned, but got %d", len(commits))
+		}
+	}
+}
+
+func TestCombinedStatus(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("Bad method: %s", r.Method)
+		}
+		if r.URL.Path == "/repos/k8s/kuber/commits/SHA/status" {
+			statuses := CombinedStatus{
+				SHA:      "SHA",
+				Statuses: []Status{{Context: "foo"}},
+			}
+			b, err := json.Marshal(statuses)
+			if err != nil {
+				t.Fatalf("Didn't expect error: %v", err)
+			}
+			w.Header().Set("Link", fmt.Sprintf(`<blorp>; rel="first", <https://%s/someotherpath>; rel="next"`, r.Host))
+			fmt.Fprint(w, string(b))
+		} else if r.URL.Path == "/someotherpath" {
+			statuses := CombinedStatus{
+				SHA:      "SHA",
+				Statuses: []Status{{Context: "bar"}},
+			}
+			b, err := json.Marshal(statuses)
+			if err != nil {
+				t.Fatalf("Didn't expect error: %v", err)
+			}
+			fmt.Fprint(w, string(b))
+		} else {
+			t.Errorf("Bad request path: %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	c := getClient(ts.URL)
+	combined, err := c.GetCombinedStatus("k8s", "kuber", "SHA")
+	if err != nil {
+		t.Errorf("Didn't expect error: %v", err)
+	} else if combined.SHA != "SHA" {
+		t.Errorf("Expected SHA 'SHA', found %s", combined.SHA)
+	} else if len(combined.Statuses) != 2 {
+		t.Errorf("Expected two statuses, found %d: %v", len(combined.Statuses), combined.Statuses)
+	} else if combined.Statuses[0].Context != "foo" || combined.Statuses[1].Context != "bar" {
+		t.Errorf("Wrong review IDs: %v", combined.Statuses)
 	}
 }
