@@ -26,17 +26,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ghodss/yaml"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"sigs.k8s.io/yaml"
 
 	"k8s.io/test-infra/prow/commentpruner"
+	"k8s.io/test-infra/prow/repoowners"
+
 	"k8s.io/test-infra/prow/config"
 	"k8s.io/test-infra/prow/git"
 	"k8s.io/test-infra/prow/github"
 	"k8s.io/test-infra/prow/kube"
+	"k8s.io/test-infra/prow/labels"
 	"k8s.io/test-infra/prow/pluginhelp"
-	"k8s.io/test-infra/prow/repoowners"
 	"k8s.io/test-infra/prow/slack"
 )
 
@@ -62,71 +64,70 @@ func HelpProviders() map[string]HelpProvider {
 	return pluginHelp
 }
 
-type IssueHandler func(PluginClient, github.IssueEvent) error
+type IssueHandler func(Agent, github.IssueEvent) error
 
 func RegisterIssueHandler(name string, fn IssueHandler, help HelpProvider) {
 	pluginHelp[name] = help
 	issueHandlers[name] = fn
 }
 
-type IssueCommentHandler func(PluginClient, github.IssueCommentEvent) error
+type IssueCommentHandler func(Agent, github.IssueCommentEvent) error
 
 func RegisterIssueCommentHandler(name string, fn IssueCommentHandler, help HelpProvider) {
 	pluginHelp[name] = help
 	issueCommentHandlers[name] = fn
 }
 
-type PullRequestHandler func(PluginClient, github.PullRequestEvent) error
+type PullRequestHandler func(Agent, github.PullRequestEvent) error
 
 func RegisterPullRequestHandler(name string, fn PullRequestHandler, help HelpProvider) {
 	pluginHelp[name] = help
 	pullRequestHandlers[name] = fn
 }
 
-type StatusEventHandler func(PluginClient, github.StatusEvent) error
+type StatusEventHandler func(Agent, github.StatusEvent) error
 
 func RegisterStatusEventHandler(name string, fn StatusEventHandler, help HelpProvider) {
 	pluginHelp[name] = help
 	statusEventHandlers[name] = fn
 }
 
-type PushEventHandler func(PluginClient, github.PushEvent) error
+type PushEventHandler func(Agent, github.PushEvent) error
 
 func RegisterPushEventHandler(name string, fn PushEventHandler, help HelpProvider) {
 	pluginHelp[name] = help
 	pushEventHandlers[name] = fn
 }
 
-type ReviewEventHandler func(PluginClient, github.ReviewEvent) error
+type ReviewEventHandler func(Agent, github.ReviewEvent) error
 
 func RegisterReviewEventHandler(name string, fn ReviewEventHandler, help HelpProvider) {
 	pluginHelp[name] = help
 	reviewEventHandlers[name] = fn
 }
 
-type ReviewCommentEventHandler func(PluginClient, github.ReviewCommentEvent) error
+type ReviewCommentEventHandler func(Agent, github.ReviewCommentEvent) error
 
 func RegisterReviewCommentEventHandler(name string, fn ReviewCommentEventHandler, help HelpProvider) {
 	pluginHelp[name] = help
 	reviewCommentEventHandlers[name] = fn
 }
 
-type GenericCommentHandler func(PluginClient, github.GenericCommentEvent) error
+type GenericCommentHandler func(Agent, github.GenericCommentEvent) error
 
 func RegisterGenericCommentHandler(name string, fn GenericCommentHandler, help HelpProvider) {
 	pluginHelp[name] = help
 	genericCommentHandlers[name] = fn
 }
 
-// PluginClient may be used concurrently, so each entry must be thread-safe.
-type PluginClient struct {
+// Agent may be used concurrently, so each entry must be thread-safe.
+type Agent struct {
 	GitHubClient *github.Client
 	KubeClient   *kube.Client
 	GitClient    *git.Client
 	SlackClient  *slack.Client
-	OwnersClient repoowners.Interface
 
-	CommentPruner *commentpruner.EventClient
+	OwnersClient *repoowners.Client
 
 	// Config provides information about the jobs
 	// that we know how to run for repos.
@@ -135,11 +136,52 @@ type PluginClient struct {
 	PluginConfig *Configuration
 
 	Logger *logrus.Entry
+
+	// may be nil if not initialized
+	commentPruner *commentpruner.EventClient
 }
 
-type PluginAgent struct {
-	PluginClient
+func NewAgent(configAgent *config.Agent, pluginConfigAgent *ConfigAgent, clientAgent *ClientAgent, logger *logrus.Entry) Agent {
+	prowConfig := configAgent.Config()
+	pluginConfig := pluginConfigAgent.Config()
+	return Agent{
+		GitHubClient: clientAgent.GitHubClient,
+		KubeClient:   clientAgent.KubeClient,
+		GitClient:    clientAgent.GitClient,
+		SlackClient:  clientAgent.SlackClient,
+		OwnersClient: repoowners.NewClient(
+			clientAgent.GitClient, clientAgent.GitHubClient,
+			prowConfig, pluginConfig.MDYAMLEnabled,
+			pluginConfig.SkipCollaborators,
+		),
+		Config:       prowConfig,
+		PluginConfig: pluginConfig,
+		Logger:       logger,
+	}
+}
 
+func (a *Agent) InitializeCommentPruner(org, repo string, pr int) {
+	a.commentPruner = commentpruner.NewEventClient(
+		a.GitHubClient, a.Logger.WithField("client", "commentpruner"),
+		org, repo, pr,
+	)
+}
+
+func (a *Agent) CommentPruner() (*commentpruner.EventClient, error) {
+	if a.commentPruner == nil {
+		return nil, errors.New("comment pruner client never initialized")
+	}
+	return a.commentPruner, nil
+}
+
+type ClientAgent struct {
+	GitHubClient *github.Client
+	KubeClient   *kube.Client
+	GitClient    *git.Client
+	SlackClient  *slack.Client
+}
+
+type ConfigAgent struct {
 	mut           sync.Mutex
 	configuration *Configuration
 }
@@ -167,6 +209,7 @@ type Configuration struct {
 	Cat                  Cat                    `json:"cat,omitempty"`
 	CherryPickUnapproved CherryPickUnapproved   `json:"cherry_pick_unapproved,omitempty"`
 	ConfigUpdater        ConfigUpdater          `json:"config_updater,omitempty"`
+	Golint               *Golint                `json:"golint,omitempty"`
 	Heart                Heart                  `json:"heart,omitempty"`
 	Label                *Label                 `json:"label,omitempty"`
 	Lgtm                 []Lgtm                 `json:"lgtm,omitempty"`
@@ -177,7 +220,15 @@ type Configuration struct {
 	SigMention           SigMention             `json:"sigmention,omitempty"`
 	Size                 *Size                  `json:"size,omitempty"`
 	Triggers             []Trigger              `json:"triggers,omitempty"`
-	Welcome              Welcome                `json:"welcome,omitempty"`
+	Welcome              []Welcome              `json:"welcome,omitempty"`
+}
+
+// Golint holds configuration for the golint plugin
+type Golint struct {
+	// MinimumConfidence is the smallest permissible confidence
+	// in (0,1] over which problems will be printed. Defaults to
+	// 0.8, as does the `go lint` tool.
+	MinimumConfidence *float64 `json:"minimum_confidence,omitempty"`
 }
 
 // ExternalPlugin holds configuration for registering an external
@@ -241,9 +292,9 @@ type Owners struct {
 	LabelsBlackList []string `json:"labels_blacklist,omitempty"`
 }
 
-func (pa *PluginAgent) MDYAMLEnabled(org, repo string) bool {
+func (c *Configuration) MDYAMLEnabled(org, repo string) bool {
 	full := fmt.Sprintf("%s/%s", org, repo)
-	for _, elem := range pa.Config().Owners.MDYAMLRepos {
+	for _, elem := range c.Owners.MDYAMLRepos {
 		if elem == org || elem == full {
 			return true
 		}
@@ -251,9 +302,9 @@ func (pa *PluginAgent) MDYAMLEnabled(org, repo string) bool {
 	return false
 }
 
-func (pa *PluginAgent) SkipCollaborators(org, repo string) bool {
+func (c *Configuration) SkipCollaborators(org, repo string) bool {
 	full := fmt.Sprintf("%s/%s", org, repo)
-	for _, elem := range pa.Config().Owners.SkipCollaborators {
+	for _, elem := range c.Owners.SkipCollaborators {
 		if elem == org || elem == full {
 			return true
 		}
@@ -357,6 +408,15 @@ type Lgtm struct {
 	// ReviewActsAsLgtm indicates that a Github review of "approve" or "request changes"
 	// acts as adding or removing the lgtm label
 	ReviewActsAsLgtm bool `json:"review_acts_as_lgtm,omitempty"`
+	// StoreTreeHash indicates if tree_hash should be stored inside a comment to detect
+	// squashed commits before removing lgtm labels
+	StoreTreeHash bool `json:"store_tree_hash,omitempty"`
+	// WARNING: This disables the security mechanism that prevents a malicious member (or
+	// compromised GitHub account) from merging arbitrary code. Use with caution.
+	//
+	// StickyLgtmTeam specifies the Github team whose members are trusted with sticky LGTM,
+	// which eliminates the need to re-lgtm minor fixes/updates.
+	StickyLgtmTeam string `json:"trusted_team_for_sticky_lgtm,omitempty"`
 }
 
 type Cat struct {
@@ -383,12 +443,22 @@ type Trigger struct {
 	// OnlyOrgMembers requires PRs and/or /ok-to-test comments to come from org members.
 	// By default, trigger also include repo collaborators.
 	OnlyOrgMembers bool `json:"only_org_members,omitempty"`
+	// IgnoreOkToTest makes trigger ignore /ok-to-test comments.
+	// This is a security mitigation to only allow testing from trusted users.
+	IgnoreOkToTest bool `json:"ignore_ok_to_test,omitempty"`
 }
 
 type Heart struct {
 	// Adorees is a list of GitHub logins for members
 	// for whom we will add emojis to comments
 	Adorees []string `json:"adorees,omitempty"`
+	// CommentRegexp is the regular expression for comments
+	// made by adorees that the plugin adds emojis to.
+	// If not specified, the plugin will not add emojis to
+	// any comments.
+	// Compiles into CommentRe during config load.
+	CommentRegexp string         `json:"commentregexp,omitempty"`
+	CommentRe     *regexp.Regexp `json:"-"`
 }
 
 // Milestone contains the configuration options for the milestone and
@@ -441,7 +511,7 @@ type ConfigUpdater struct {
 
 // MergeWarning is a config for the slackevents plugin's manual merge warings.
 // If a PR is pushed to any of the repos listed in the config
-// then send messages to the all the  slack channels listed if pusher is NOT in the whitelist.
+// then send messages to the all the slack channels listed if pusher is NOT in the whitelist.
 type MergeWarning struct {
 	// Repos is either of the form org/repos or just org.
 	Repos []string `json:"repos,omitempty"`
@@ -455,9 +525,10 @@ type MergeWarning struct {
 
 // Welcome is config for the welcome plugin
 type Welcome struct {
+	// Repos is either of the form org/repos or just org.
+	Repos []string `json:"repos,omitempty"`
 	// MessageTemplate is the welcome message template to post on new-contributor PRs
 	// For the info struct see prow/plugins/welcome/welcome.go's PRInfo
-	// TODO(bentheelder): make this be configurable per-repo?
 	MessageTemplate string `json:"message_template,omitempty"`
 }
 
@@ -638,7 +709,7 @@ func (c *Configuration) setDefaults() {
 		c.SigMention.Regexp = `(?m)@kubernetes/sig-([\w-]*)-(misc|test-failures|bugs|feature-requests|proposals|pr-reviews|api-reviews)`
 	}
 	if c.Owners.LabelsBlackList == nil {
-		c.Owners.LabelsBlackList = []string{"approved", "lgtm"}
+		c.Owners.LabelsBlackList = []string{labels.Approved, labels.LGTM}
 	}
 	if c.CherryPickUnapproved.BranchRegexp == "" {
 		c.CherryPickUnapproved.BranchRegexp = `^release-.*$`
@@ -660,7 +731,7 @@ The list of patch release managers for each release can be found [here](https://
 
 // Load attempts to load config from the path. It returns an error if either
 // the file can't be read or it contains an unknown plugin.
-func (pa *PluginAgent) Load(path string) error {
+func (pa *ConfigAgent) Load(path string) error {
 	b, err := ioutil.ReadFile(path)
 	if err != nil {
 		return err
@@ -703,7 +774,7 @@ func (pa *PluginAgent) Load(path string) error {
 	return nil
 }
 
-func (pa *PluginAgent) Config() *Configuration {
+func (pa *ConfigAgent) Config() *Configuration {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 	return pa.configuration
@@ -851,6 +922,12 @@ func compileRegexpsAndDurations(pc *Configuration) error {
 	}
 	pc.CherryPickUnapproved.BranchRe = branchRe
 
+	commentRe, err := regexp.Compile(pc.Heart.CommentRegexp)
+	if err != nil {
+		return err
+	}
+	pc.Heart.CommentRe = commentRe
+
 	rs := pc.RequireMatchingLabel
 	for i := range rs {
 		re, err := regexp.Compile(rs[i].Regexp)
@@ -873,7 +950,7 @@ func compileRegexpsAndDurations(pc *Configuration) error {
 // as a map from repositories to the list of plugins that are enabled on them.
 // Specifying simply an org name will also work, and will enable the plugin on
 // all repos in the org.
-func (pa *PluginAgent) Set(pc *Configuration) {
+func (pa *ConfigAgent) Set(pc *Configuration) {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 	pa.configuration = pc
@@ -881,7 +958,7 @@ func (pa *PluginAgent) Set(pc *Configuration) {
 
 // Start starts polling path for plugin config. If the first attempt fails,
 // then start returns the error. Future errors will halt updates but not stop.
-func (pa *PluginAgent) Start(path string) error {
+func (pa *ConfigAgent) Start(path string) error {
 	if err := pa.Load(path); err != nil {
 		return err
 	}
@@ -897,7 +974,7 @@ func (pa *PluginAgent) Start(path string) error {
 }
 
 // GenericCommentHandlers returns a map of plugin names to handlers for the repo.
-func (pa *PluginAgent) GenericCommentHandlers(owner, repo string) map[string]GenericCommentHandler {
+func (pa *ConfigAgent) GenericCommentHandlers(owner, repo string) map[string]GenericCommentHandler {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 
@@ -911,7 +988,7 @@ func (pa *PluginAgent) GenericCommentHandlers(owner, repo string) map[string]Gen
 }
 
 // IssueHandlers returns a map of plugin names to handlers for the repo.
-func (pa *PluginAgent) IssueHandlers(owner, repo string) map[string]IssueHandler {
+func (pa *ConfigAgent) IssueHandlers(owner, repo string) map[string]IssueHandler {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 
@@ -925,7 +1002,7 @@ func (pa *PluginAgent) IssueHandlers(owner, repo string) map[string]IssueHandler
 }
 
 // IssueCommentHandlers returns a map of plugin names to handlers for the repo.
-func (pa *PluginAgent) IssueCommentHandlers(owner, repo string) map[string]IssueCommentHandler {
+func (pa *ConfigAgent) IssueCommentHandlers(owner, repo string) map[string]IssueCommentHandler {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 
@@ -940,7 +1017,7 @@ func (pa *PluginAgent) IssueCommentHandlers(owner, repo string) map[string]Issue
 }
 
 // PullRequestHandlers returns a map of plugin names to handlers for the repo.
-func (pa *PluginAgent) PullRequestHandlers(owner, repo string) map[string]PullRequestHandler {
+func (pa *ConfigAgent) PullRequestHandlers(owner, repo string) map[string]PullRequestHandler {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 
@@ -955,7 +1032,7 @@ func (pa *PluginAgent) PullRequestHandlers(owner, repo string) map[string]PullRe
 }
 
 // ReviewEventHandlers returns a map of plugin names to handlers for the repo.
-func (pa *PluginAgent) ReviewEventHandlers(owner, repo string) map[string]ReviewEventHandler {
+func (pa *ConfigAgent) ReviewEventHandlers(owner, repo string) map[string]ReviewEventHandler {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 
@@ -970,7 +1047,7 @@ func (pa *PluginAgent) ReviewEventHandlers(owner, repo string) map[string]Review
 }
 
 // ReviewCommentEventHandlers returns a map of plugin names to handlers for the repo.
-func (pa *PluginAgent) ReviewCommentEventHandlers(owner, repo string) map[string]ReviewCommentEventHandler {
+func (pa *ConfigAgent) ReviewCommentEventHandlers(owner, repo string) map[string]ReviewCommentEventHandler {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 
@@ -985,7 +1062,7 @@ func (pa *PluginAgent) ReviewCommentEventHandlers(owner, repo string) map[string
 }
 
 // StatusEventHandlers returns a map of plugin names to handlers for the repo.
-func (pa *PluginAgent) StatusEventHandlers(owner, repo string) map[string]StatusEventHandler {
+func (pa *ConfigAgent) StatusEventHandlers(owner, repo string) map[string]StatusEventHandler {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 
@@ -1000,7 +1077,7 @@ func (pa *PluginAgent) StatusEventHandlers(owner, repo string) map[string]Status
 }
 
 // PushEventHandlers returns a map of plugin names to handlers for the repo.
-func (pa *PluginAgent) PushEventHandlers(owner, repo string) map[string]PushEventHandler {
+func (pa *ConfigAgent) PushEventHandlers(owner, repo string) map[string]PushEventHandler {
 	pa.mut.Lock()
 	defer pa.mut.Unlock()
 
@@ -1015,7 +1092,7 @@ func (pa *PluginAgent) PushEventHandlers(owner, repo string) map[string]PushEven
 }
 
 // getPlugins returns a list of plugins that are enabled on a given (org, repository).
-func (pa *PluginAgent) getPlugins(owner, repo string) []string {
+func (pa *ConfigAgent) getPlugins(owner, repo string) []string {
 	var plugins []string
 
 	fullName := fmt.Sprintf("%s/%s", owner, repo)

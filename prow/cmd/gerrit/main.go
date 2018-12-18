@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -30,73 +29,61 @@ import (
 
 	"k8s.io/test-infra/prow/config"
 	"k8s.io/test-infra/prow/gerrit/adapter"
+	"k8s.io/test-infra/prow/gerrit/client"
 	"k8s.io/test-infra/prow/kube"
 	"k8s.io/test-infra/prow/logrusutil"
 )
 
-type projectsFlag []string
-
-func (p *projectsFlag) String() string {
-	return fmt.Sprintf("%v", *p)
-}
-
-func (p *projectsFlag) Set(value string) error {
-	*p = append(*p, value)
-	return nil
-}
-
 type options struct {
-	configPath string
-	// instance : projects map
-	projectsVar      projectsFlag
-	projects         map[string][]string
+	cookiefilePath   string
+	configPath       string
+	jobConfigPath    string
+	projects         client.ProjectsFlag
 	lastSyncFallback string
 }
 
 func (o *options) Validate() error {
-	if len(o.projectsVar) == 0 {
-		return errors.New("--gerrit-projects must set")
+	if len(o.projects) == 0 {
+		return errors.New("--gerrit-projects must be set")
 	}
 
-	o.projects = make(map[string][]string)
+	if o.cookiefilePath == "" {
+		logrus.Info("--cookiefile is not set, using anonymous authentication")
+	}
 
-	for _, projects := range o.projectsVar {
-		split := strings.Split(projects, "=")
-		if len(split) != 2 {
-			return errors.New("--gerrit-projects must be in a form of --gerrit-projects=instance-foo=proj1,proj2")
-		}
+	if o.configPath == "" {
+		return errors.New("--config-path must be set")
+	}
 
-		instance := split[0]
-		projects := strings.Split(split[1], ",")
-
-		logrus.Infof("Added projects %v from instance %s", projects, instance)
-		o.projects[instance] = projects
+	if o.lastSyncFallback == "" {
+		return errors.New("--last-sync-fallback must be set")
 	}
 
 	return nil
 }
 
 func gatherOptions() options {
-	o := options{}
-	flag.StringVar(&o.configPath, "config-path", "/etc/config/config.yaml", "Path to config.yaml.")
-	flag.Var(&o.projectsVar, "gerrit-projects", "repeatable gerrit instance/projects list, example: --gerrit-projects=instance-foo=proj1,proj2")
+	o := options{
+		projects: client.ProjectsFlag{},
+	}
+	flag.StringVar(&o.configPath, "config-path", "", "Path to config.yaml.")
+	flag.StringVar(&o.jobConfigPath, "job-config-path", "", "Path to prow job configs")
+	flag.StringVar(&o.cookiefilePath, "cookiefile", "", "Path to git http.cookiefile, leave empty for anonymous")
+	flag.Var(&o.projects, "gerrit-projects", "Set of gerrit repos to monitor on a host example: --gerrit-host=https://android.googlesource.com=platform/build,toolchain/llvm, repeat flag for each host")
 	flag.StringVar(&o.lastSyncFallback, "last-sync-fallback", "", "Path to persistent volume to load the last sync time")
 	flag.Parse()
 	return o
 }
 
 func main() {
+	logrus.SetFormatter(logrusutil.NewDefaultFieldsFormatter(nil, logrus.Fields{"component": "gerrit"}))
 	o := gatherOptions()
 	if err := o.Validate(); err != nil {
 		logrus.Fatalf("Invalid options: %v", err)
 	}
 
-	logrus.SetFormatter(
-		logrusutil.NewDefaultFieldsFormatter(nil, logrus.Fields{"component": "gerrit"}),
-	)
-
 	ca := &config.Agent{}
-	if err := ca.Start(o.configPath, ""); err != nil {
+	if err := ca.Start(o.configPath, o.jobConfigPath); err != nil {
 		logrus.WithError(err).Fatal("Error starting config agent.")
 	}
 
@@ -105,7 +92,7 @@ func main() {
 		logrus.WithError(err).Fatal("Error getting kube client.")
 	}
 
-	c, err := adapter.NewController(o.lastSyncFallback, o.projects, kc, ca)
+	c, err := adapter.NewController(o.lastSyncFallback, o.cookiefilePath, o.projects, kc, ca)
 	if err != nil {
 		logrus.WithError(err).Fatal("Error creating gerrit client.")
 	}

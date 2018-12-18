@@ -1,15 +1,16 @@
 plank:
-  job_url_template: 'https://k8s-gubernator.appspot.com/build/kubernetes-jenkins/{{if eq .Spec.Type "presubmit"}}pr-logs/pull{{else if eq .Spec.Type "batch"}}pr-logs/pull{{else}}logs{{end}}{{if .Spec.Refs}}{{if ne .Spec.Refs.Org ""}}{{if ne .Spec.Refs.Org "kubernetes"}}/{{if and (eq .Spec.Refs.Org "kubernetes-sigs") (ne .Spec.Refs.Repo "poseidon")}}sigs.k8s.io{{else}}{{.Spec.Refs.Org}}{{end}}_{{.Spec.Refs.Repo}}{{else if ne .Spec.Refs.Repo "kubernetes"}}/{{.Spec.Refs.Repo}}{{end}}{{end}}{{end}}{{if eq .Spec.Type "presubmit"}}/{{with index .Spec.Refs.Pulls 0}}{{.Number}}{{end}}{{else if eq .Spec.Type "batch"}}/batch{{end}}/{{.Spec.Job}}/{{.Status.BuildID}}/'
-  report_template: '[Full PR test history](https://k8s-gubernator.appspot.com/pr/{{if eq .Spec.Refs.Org "kubernetes"}}{{if eq .Spec.Refs.Repo "kubernetes"}}{{else}}{{.Spec.Refs.Repo}}/{{end}}{{else}}{{.Spec.Refs.Org}}_{{.Spec.Refs.Repo}}/{{end}}{{with index .Spec.Refs.Pulls 0}}{{.Number}}{{end}}). [Your PR dashboard](https://k8s-gubernator.appspot.com/pr/{{with index .Spec.Refs.Pulls 0}}{{.Author}}{{end}}). Please help us cut down on flakes by [linking to](https://git.k8s.io/community/contributors/devel/flaky-tests.md#filing-issues-for-flaky-tests) an [open issue](https://github.com/{{.Spec.Refs.Org}}/{{.Spec.Refs.Repo}}/issues?q=is:issue+is:open) when you hit one in your PR.'
+  job_url_template: '{{if .Spec.Refs}}{{if eq .Spec.Refs.Org "kubernetes-security"}}https://console.cloud.google.com/storage/browser/kubernetes-security-prow/{{else}}https://gubernator.k8s.io/build/kubernetes-jenkins/{{end}}{{else}}https://gubernator.k8s.io/build/kubernetes-jenkins/{{end}}{{if eq .Spec.Type "presubmit"}}pr-logs/pull{{else if eq .Spec.Type "batch"}}pr-logs/pull{{else}}logs{{end}}{{if .Spec.Refs}}{{if ne .Spec.Refs.Org ""}}{{if ne .Spec.Refs.Org "kubernetes"}}/{{if and (eq .Spec.Refs.Org "kubernetes-sigs") (ne .Spec.Refs.Repo "poseidon")}}sigs.k8s.io{{else}}{{.Spec.Refs.Org}}{{end}}_{{.Spec.Refs.Repo}}{{else if ne .Spec.Refs.Repo "kubernetes"}}/{{.Spec.Refs.Repo}}{{end}}{{end}}{{end}}{{if eq .Spec.Type "presubmit"}}/{{with index .Spec.Refs.Pulls 0}}{{.Number}}{{end}}{{else if eq .Spec.Type "batch"}}/batch{{end}}/{{.Spec.Job}}/{{.Status.BuildID}}/'
+  report_template: '[Full PR test history](https://gubernator.k8s.io/pr/{{if eq .Spec.Refs.Org "kubernetes"}}{{if eq .Spec.Refs.Repo "kubernetes"}}{{else}}{{.Spec.Refs.Repo}}/{{end}}{{else}}{{.Spec.Refs.Org}}_{{.Spec.Refs.Repo}}/{{end}}{{with index .Spec.Refs.Pulls 0}}{{.Number}}{{end}}). [Your PR dashboard](https://gubernator.k8s.io/pr/{{with index .Spec.Refs.Pulls 0}}{{.Author}}{{end}}). Please help us cut down on flakes by [linking to](https://git.k8s.io/community/contributors/devel/flaky-tests.md#filing-issues-for-flaky-tests) an [open issue](https://github.com/{{.Spec.Refs.Org}}/{{.Spec.Refs.Repo}}/issues?q=is:issue+is:open) when you hit one in your PR.'
+  job_url_prefix: https://gubernator.k8s.io/build/
   pod_pending_timeout: 60m
   default_decoration_config:
     timeout: 7200000000000 # 2h
     grace_period: 15000000000 # 15s
     utility_images:
-      clonerefs: "registry.svc.ci.openshift.org/ci/clonerefs:latest"
-      initupload: "registry.svc.ci.openshift.org/ci/initupload:latest"
-      entrypoint: "registry.svc.ci.openshift.org/ci/entrypoint:latest"
-      sidecar: "registry.svc.ci.openshift.org/ci/sidecar:latest"
+      clonerefs: "gcr.io/k8s-prow/clonerefs:v20181207-201eb76"
+      initupload: "gcr.io/k8s-prow/initupload:v20181207-201eb76"
+      entrypoint: "gcr.io/k8s-prow/entrypoint:v20181207-201eb76"
+      sidecar: "gcr.io/k8s-prow/sidecar:v20181207-201eb76"
     gcs_configuration:
       bucket: "kubernetes-jenkins"
       path_strategy: "legacy"
@@ -27,11 +28,11 @@ deck:
     size_limit: 500000000 # 500MB
     viewers:
       "started.json|finished.json":
-      - "metadata-viewer"
+      - "metadata"
       "build-log.txt":
-      - "build-log-viewer"
+      - "buildlog"
       "artifacts/junit.*\\.xml":
-      - "junit-viewer"
+      - "junit"
   tide_update_period: 1s
   hidden_repos:
   - kubernetes-security
@@ -79,7 +80,12 @@ branch-protection:
             users: []
             teams:
             - stage-bots
-        cloud-controller-manager:
+        cloud-provider:
+          restrictions:
+            users: []
+            teams:
+            - stage-bots
+        cluster-bootstrap:
           restrictions:
             users: []
             teams:
@@ -146,6 +152,11 @@ branch-protection:
             teams:
             - stage-bots
         metrics:
+          restrictions:
+            users: []
+            teams:
+            - stage-bots
+        node-api:
           restrictions:
             users: []
             teams:
@@ -247,15 +258,27 @@ branch-protection:
         contexts:
         - cla/linuxfoundation
       repos:
+        apiserver-builder:
+          required_status_checks:
+            contexts:
+            - continuous-integration/travis-ci
         bootkube:
           required_status_checks:
             contexts:
             - continuous-integration/travis-ci
-        kube-arbitrator:
+        cluster-proportional-autoscaler:
           required_status_checks:
             contexts:
             - continuous-integration/travis-ci
-        node-feature-discovery:
+        external-storage:
+          required_status_checks:
+            contexts:
+            - continuous-integration/travis-ci
+        kube-aws:
+          required_status_checks:
+            contexts:
+            - continuous-integration/travis-ci
+        metrics-server:
           required_status_checks:
             contexts:
             - continuous-integration/travis-ci
@@ -264,6 +287,19 @@ branch-protection:
       required_status_checks:
         contexts:
         - cla/linuxfoundation
+      repos:
+        kube-batch:
+          required_status_checks:
+            contexts:
+            - continuous-integration/travis-ci
+        kubespray:
+          required_status_checks:
+            contexts:
+            - Kubespray CI Pipeline
+        node-feature-discovery:
+          required_status_checks:
+            contexts:
+            - continuous-integration/travis-ci
 
 tide:
   queries:
@@ -277,7 +313,6 @@ tide:
     - do-not-merge/hold
     - do-not-merge/invalid-owners-file
     - do-not-merge/work-in-progress
-    - needs-ok-to-test
     - needs-rebase
   - repos:
     - helm/charts
@@ -293,19 +328,18 @@ tide:
     - do-not-merge/invalid-owners-file
     - do-not-merge/release-note-label-needed
     - do-not-merge/work-in-progress
-    - needs-ok-to-test
     - needs-rebase
   - orgs:
     - kubernetes-client
     - kubernetes-csi
+    - kubernetes-incubator
     - kubernetes-sigs
     repos:
     - client-go/unofficial-docs
-    - kubernetes-incubator/ip-masq-agent
-    - kubernetes-incubator/kubespray
-    - kubernetes-incubator/service-catalog
+    - kubernetes/autoscaler
     - kubernetes/client-go
     - kubernetes/cloud-provider-aws
+    - kubernetes/cloud-provider-alibaba-cloud
     - kubernetes/cloud-provider-azure
     - kubernetes/cloud-provider-gcp
     - kubernetes/cloud-provider-openstack
@@ -315,22 +349,24 @@ tide:
     - kubernetes/contrib
     - kubernetes/dashboard
     - kubernetes/dns
+    - kubernetes/enhancements
     - kubernetes/examples
-    - kubernetes/features
     - kubernetes/federation
+    - kubernetes/frakti
     - kubernetes/gengo
-    - kubernetes/heapster
+    - kubernetes/git-sync
     - kubernetes/ingress-gce
     - kubernetes/ingress-nginx
+    - kubernetes/k8s.io
+    - kubernetes/klog
+    - kubernetes/komposer
     - kubernetes/kops
     - kubernetes/kube-deploy
     - kubernetes/kube-openapi
     - kubernetes/kube-state-metrics
     - kubernetes/kubeadm
     - kubernetes/kubectl
-    - kubernetes/kubernetes-docs-ja
-    - kubernetes/kubernetes-docs-ko
-    - kubernetes/kubernetes-docs-zh
+    - kubernetes/kubernetes-anywhere
     - kubernetes/kubernetes-template-project
     - kubernetes/minikube
     - kubernetes/node-problem-detector
@@ -356,18 +392,12 @@ tide:
     - do-not-merge/invalid-owners-file
     - do-not-merge/release-note-label-needed
     - do-not-merge/work-in-progress
-    - needs-ok-to-test
     - needs-rebase
   - repos:
     - kubernetes/kubernetes
-    milestone: v1.12
-    includedBranches:
-    - master
-    - release-1.12
     labels:
     - lgtm
     - approved
-    - priority/critical-urgent
     - "cncf-cla: yes"
     missingLabels:
     - do-not-merge
@@ -381,23 +411,17 @@ tide:
     - needs-rebase
     - needs-sig
   - repos:
-    - kubernetes/kubernetes
-    excludedBranches:
-    - master
-    - release-1.12
+    -  GoogleCloudPlatform/netd
     labels:
     - lgtm
     - approved
-    - "cncf-cla: yes"
     missingLabels:
     - do-not-merge
     - do-not-merge/blocked-paths
-    - do-not-merge/cherry-pick-not-approved
     - do-not-merge/hold
     - do-not-merge/invalid-owners-file
-    - do-not-merge/release-note-label-needed
     - do-not-merge/work-in-progress
-    - needs-rebase
+
   merge_method:
     helm/charts: squash
     kubeflow: squash
@@ -405,14 +429,14 @@ tide:
     kubernetes-client/gen: squash
     kubernetes-incubator/service-catalog: squash
     kubernetes-sigs/cluster-api-provider-aws: squash
+    kubernetes-sigs/cluster-api-provider-digitalocean: squash
     kubernetes-sigs/cluster-api-provider-gcp: squash
     kubernetes-sigs/cluster-api-provider-openstack: squash
     kubernetes-sigs/cluster-api-provider-vsphere: squash
     kubernetes-sigs/cluster-api: squash
+    kubernetes-sigs/kubespray: squash
     kubernetes/dashboard: squash
     kubernetes/kube-deploy: squash
-    kubernetes/kubernetes-docs-ja: squash
-    kubernetes/kubernetes-docs-ko: squash
     kubernetes/website: squash
   pr_status_base_url: https://prow.k8s.io/pr
   blocker_label: merge-blocker

@@ -1,22 +1,26 @@
 package(default_visibility = ["//visibility:public"])
 
-load("@io_bazel_rules_docker//docker:docker.bzl", "docker_bundle")
+load("@io_bazel_rules_docker//container:bundle.bzl", "container_bundle")
 load("@io_bazel_rules_docker//contrib:push-all.bzl", "docker_push")
+load("//prow:def.bzl", "prefix", "tags")
 load(
-    ":prow.bzl",
-    prow_docker_tags = "docker_tags",
-    prow_prefix = "prefix",
-    prow_tags = "tags",
+    "//def:image.bzl",
+    image_tags = "tags",
 )
 
-docker_bundle(
+container_bundle(
     name = "release",
-    images = prow_tags(
+    images = tags(
+        "artifact-uploader",
         "branchprotector",
+        "build",
         "clonerefs",
-        "entrypoint",
         "deck",
+        "entrypoint",
+        "gerrit",
+        "crier",
         "grandmatriarch",
+        "gcsupload",
         "hook",
         "horologium",
         "initupload",
@@ -24,11 +28,15 @@ docker_bundle(
         "plank",
         "sidecar",
         "sinker",
-        "splice",
+        "status-reconciler",
         "tide",
         "tot",
-    ) + prow_docker_tags(**{
-        prow_prefix("needs-rebase"): "//prow/external-plugins/needs-rebase:image",
+    ) + image_tags(**{
+        prefix("needs-rebase"): "//prow/external-plugins/needs-rebase:image",
+    }) + image_tags(**{
+        prefix("cherrypicker"): "//prow/external-plugins/cherrypicker:image",
+    }) + image_tags(**{
+        prefix("refresh"): "//prow/external-plugins/refresh:image",
     }),
     stamp = True,
 )
@@ -66,11 +74,11 @@ filegroup(
         "//prow/cmd/build:all-srcs",
         "//prow/cmd/checkconfig:all-srcs",
         "//prow/cmd/clonerefs:all-srcs",
+        "//prow/cmd/crier:all-srcs",
         "//prow/cmd/deck:all-srcs",
         "//prow/cmd/entrypoint:all-srcs",
         "//prow/cmd/gcsupload:all-srcs",
         "//prow/cmd/gerrit:all-srcs",
-        "//prow/cmd/gerrit-crier:all-srcs",
         "//prow/cmd/grandmatriarch:all-srcs",
         "//prow/cmd/hook:all-srcs",
         "//prow/cmd/horologium:all-srcs",
@@ -84,9 +92,10 @@ filegroup(
         "//prow/cmd/plank:all-srcs",
         "//prow/cmd/sidecar:all-srcs",
         "//prow/cmd/sinker:all-srcs",
-        "//prow/cmd/splice:all-srcs",
+        "//prow/cmd/status-reconciler:all-srcs",
         "//prow/cmd/tide:all-srcs",
         "//prow/cmd/tot:all-srcs",
+        "//prow/cmd/util:all-srcs",
         "//prow/commentpruner:all-srcs",
         "//prow/config:all-srcs",
         "//prow/crier:all-srcs",
@@ -110,6 +119,7 @@ filegroup(
         "//prow/initupload:all-srcs",
         "//prow/jenkins:all-srcs",
         "//prow/kube:all-srcs",
+        "//prow/labels:all-srcs",
         "//prow/logrusutil:all-srcs",
         "//prow/metrics:all-srcs",
         "//prow/phony:all-srcs",
@@ -124,11 +134,13 @@ filegroup(
         "//prow/pod-utils/options:all-srcs",
         "//prow/pod-utils/wrapper:all-srcs",
         "//prow/prstatus:all-srcs",
+        "//prow/pubsub/reporter:all-srcs",
         "//prow/repoowners:all-srcs",
         "//prow/report:all-srcs",
         "//prow/sidecar:all-srcs",
         "//prow/slack:all-srcs",
         "//prow/spyglass:all-srcs",
+        "//prow/statusreconciler:all-srcs",
         "//prow/test:all-srcs",
         "//prow/tide:all-srcs",
     ],

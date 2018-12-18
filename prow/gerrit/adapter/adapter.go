@@ -18,14 +18,14 @@ limitations under the License.
 package adapter
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -41,8 +41,9 @@ type kubeClient interface {
 }
 
 type gerritClient interface {
-	QueryChanges(lastUpdate time.Time, rateLimit int) map[string][]gerrit.ChangeInfo
-	SetReview(instance, id, revision, message string) error
+	QueryChanges(lastUpdate time.Time, rateLimit int) map[string][]client.ChangeInfo
+	GetBranchRevision(instance, project, branch string) (string, error)
+	SetReview(instance, id, revision, message string, labels map[string]string) error
 }
 
 type configAgent interface {
@@ -61,27 +62,30 @@ type Controller struct {
 }
 
 // NewController returns a new gerrit controller client
-func NewController(lastSyncFallback string, projects map[string][]string, kc *kube.Client, ca *config.Agent) (*Controller, error) {
-	lastUpdate := time.Now()
-	if lastSyncFallback != "" {
-		buf, err := ioutil.ReadFile(lastSyncFallback)
-		if err == nil {
-			unix, err := strconv.ParseInt(string(buf), 10, 64)
-			if err != nil {
-				return nil, err
-			}
-			lastUpdate = time.Unix(unix, 0)
-		} else if !os.IsNotExist(err) {
-			return nil, err
-		}
-		// fallback to time.Now() if file does not exist yet
+func NewController(lastSyncFallback, cookiefilePath string, projects map[string][]string, kc *kube.Client, ca *config.Agent) (*Controller, error) {
+	if lastSyncFallback == "" {
+		return nil, errors.New("empty lastSyncFallback")
 	}
 
-	c, err := gerrit.NewClient(projects)
+	var lastUpdate time.Time
+	if buf, err := ioutil.ReadFile(lastSyncFallback); err == nil {
+		unix, err := strconv.ParseInt(string(buf), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		lastUpdate = time.Unix(unix, 0)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to read lastSyncFallback: %v", err)
+	} else {
+		logrus.Warnf("lastSyncFallback not found: %s", lastSyncFallback)
+		lastUpdate = time.Now()
+	}
+
+	c, err := client.NewClient(projects)
 	if err != nil {
 		return nil, err
 	}
-	c.Start()
+	c.Start(cookiefilePath)
 
 	return &Controller{
 		kc:               kc,
@@ -141,9 +145,10 @@ func (c *Controller) SaveLastSync(lastSync time.Time) error {
 }
 
 // Sync looks for newly made gerrit changes
-// and creates prowjobs according to presubmit specs
+// and creates prowjobs according to specs
 func (c *Controller) Sync() error {
-	syncTime := time.Now()
+	// gerrit timestamp only has second precision
+	syncTime := time.Now().Truncate(time.Second)
 
 	for instance, changes := range c.gc.QueryChanges(c.lastUpdate, c.ca.Config().Gerrit.RateLimit) {
 		for _, change := range changes {
@@ -163,84 +168,130 @@ func (c *Controller) Sync() error {
 	return nil
 }
 
+func makeCloneURI(instance, project string) (*url.URL, error) {
+	u, err := url.Parse(instance)
+	if err != nil {
+		return nil, fmt.Errorf("instance %s is not a url: %v", instance, err)
+	}
+	if u.Host == "" {
+		return nil, errors.New("instance does not set host")
+	}
+	if u.Path != "" {
+		return nil, errors.New("instance cannot set path (this is set by project)")
+	}
+	u.Path = project
+	return u, nil
+}
+
+// listChangedFiles lists (in lexicographic order) the files changed as part of a Gerrit patchset
+func listChangedFiles(changeInfo client.ChangeInfo) []string {
+	changed := []string{}
+	revision := changeInfo.Revisions[changeInfo.CurrentRevision]
+	for file := range revision.Files {
+		changed = append(changed, file)
+	}
+	return changed
+}
+
 // ProcessChange creates new presubmit prowjobs base off the gerrit changes
-func (c *Controller) ProcessChange(instance string, change gerrit.ChangeInfo) error {
+func (c *Controller) ProcessChange(instance string, change client.ChangeInfo) error {
 	rev, ok := change.Revisions[change.CurrentRevision]
 	if !ok {
 		return fmt.Errorf("cannot find current revision for change %v", change.ID)
 	}
 
-	parentSHA := ""
-	if len(rev.Commit.Parents) > 0 {
-		parentSHA = rev.Commit.Parents[0].Commit
-	}
-
 	logger := logrus.WithField("gerrit change", change.Number)
 
-	type triggeredJob struct {
-		Name, URL string
+	cloneURI, err := makeCloneURI(instance, change.Project)
+	if err != nil {
+		return fmt.Errorf("failed to create clone uri: %v", err)
 	}
-	triggeredJobs := []triggeredJob{}
 
-	for _, spec := range c.ca.Config().Presubmits[instance+"/"+change.Project] {
-		kr := kube.Refs{
-			Org:     instance,
-			Repo:    change.Project,
-			BaseRef: change.Branch,
-			BaseSHA: parentSHA,
-			Pulls: []kube.Pull{
-				{
-					Number: change.Number,
-					Author: rev.Commit.Author.Name,
-					SHA:    change.CurrentRevision,
-					Ref:    rev.Ref,
-				},
+	baseSHA, err := c.gc.GetBranchRevision(instance, change.Project, change.Branch)
+	if err != nil {
+		return fmt.Errorf("failed to get SHA from base branch: %v", err)
+	}
+
+	triggeredJobs := []string{}
+
+	kr := kube.Refs{
+		Org:      cloneURI.Host,  // Something like android.googlesource.com
+		Repo:     change.Project, // Something like platform/build
+		BaseRef:  change.Branch,
+		BaseSHA:  baseSHA,
+		CloneURI: cloneURI.String(), // Something like https://android.googlesource.com/platform/build
+		Pulls: []kube.Pull{
+			{
+				Number: change.Number,
+				Author: rev.Commit.Author.Name,
+				SHA:    change.CurrentRevision,
+				Ref:    rev.Ref,
 			},
-		}
+		},
+	}
 
-		// TODO(krzyzacy): Support AlwaysRun and RunIfChanged
-		pj := pjutil.NewProwJob(pjutil.PresubmitSpec(spec, kr), map[string]string{})
-		logger.WithFields(pjutil.ProwJobFields(&pj)).Infof("Creating a new prowjob for change %s.", change.Number)
+	type jobSpec struct {
+		spec   kube.ProwJobSpec
+		labels map[string]string
+	}
+
+	var jobSpecs []jobSpec
+
+	changedFiles := listChangedFiles(change)
+
+	switch change.Status {
+	case client.Merged:
+		postsubmits := c.ca.Config().Postsubmits[cloneURI.String()]
+		postsubmits = append(postsubmits, c.ca.Config().Postsubmits[cloneURI.Host+"/"+cloneURI.Path]...)
+		for _, postsubmit := range postsubmits {
+			if postsubmit.RunsAgainstChanges(changedFiles) {
+				jobSpecs = append(jobSpecs, jobSpec{
+					spec:   pjutil.PostsubmitSpec(postsubmit, kr),
+					labels: postsubmit.Labels,
+				})
+			}
+		}
+	case client.New:
+		presubmits := c.ca.Config().Presubmits[cloneURI.String()]
+		presubmits = append(presubmits, c.ca.Config().Presubmits[cloneURI.Host+"/"+cloneURI.Path]...)
+		for _, presubmit := range presubmits {
+			if presubmit.RunsAgainstChanges(changedFiles) {
+				jobSpecs = append(jobSpecs, jobSpec{
+					spec:   pjutil.PresubmitSpec(presubmit, kr),
+					labels: presubmit.Labels,
+				})
+			}
+		}
+	}
+
+	annotations := map[string]string{
+		client.GerritID:       change.ID,
+		client.GerritInstance: instance,
+	}
+
+	for _, jSpec := range jobSpecs {
+		labels := make(map[string]string)
+		for k, v := range jSpec.labels {
+			labels[k] = v
+		}
+		labels[client.GerritRevision] = change.CurrentRevision
+
+		pj := pjutil.NewProwJobWithAnnotation(jSpec.spec, labels, annotations)
 		if _, err := c.kc.CreateProwJob(pj); err != nil {
 			logger.WithError(err).Errorf("fail to create prowjob %v", pj)
 		} else {
-			var b bytes.Buffer
-			url := ""
-			template := c.ca.Config().Plank.JobURLTemplate
-			if template != nil {
-				if err := template.Execute(&b, &pj); err != nil {
-					logger.WithFields(pjutil.ProwJobFields(&pj)).Errorf("error executing URL template: %v", err)
-				}
-				// TODO(krzyzacy): We doesn't have buildID here yet - do a hack to get a proper URL to the PR
-				// Remove this once we have proper report interface.
-
-				// mangle
-				// https://gubernator.k8s.io/build/gob-prow/pr-logs/pull/some/repo/8940/pull-test-infra-presubmit//
-				// to
-				// https://gubernator.k8s.io/builds/gob-prow/pr-logs/pull/some_repo/8940/pull-test-infra-presubmit/
-				url = b.String()
-				url = strings.Replace(url, "build", "builds", 1)
-				// TODO(krzyzacy): gerrit path can be foo.googlesource.com/bar/baz, which means we took bar/baz as the repo
-				// we are mangling the path in bootstrap.py, we need to handle this better in podutils
-				url = strings.Replace(url, change.Project, strings.Replace(change.Project, "/", "_", -1), 1)
-				url = strings.TrimSuffix(url, "//")
-			}
-			triggeredJobs = append(triggeredJobs, triggeredJob{Name: spec.Name, URL: url})
+			triggeredJobs = append(triggeredJobs, jSpec.spec.Job)
 		}
 	}
 
 	if len(triggeredJobs) > 0 {
 		// comment back to gerrit
-		message := "Triggered presubmit:"
+		message := fmt.Sprintf("Triggered %d prow jobs:", len(triggeredJobs))
 		for _, job := range triggeredJobs {
-			if job.URL != "" {
-				message += fmt.Sprintf("\n  * Name: %s, URL: %s", job.Name, job.URL)
-			} else {
-				message += fmt.Sprintf("\n  * Name: %s", job.Name)
-			}
+			message += fmt.Sprintf("\n  * Name: %s", job)
 		}
 
-		if err := c.gc.SetReview(instance, change.ID, change.CurrentRevision, message); err != nil {
+		if err := c.gc.SetReview(instance, change.ID, change.CurrentRevision, message, nil); err != nil {
 			return err
 		}
 	}

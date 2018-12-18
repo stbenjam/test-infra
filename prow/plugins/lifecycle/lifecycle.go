@@ -22,17 +22,14 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"k8s.io/test-infra/prow/github"
+	"k8s.io/test-infra/prow/labels"
 	"k8s.io/test-infra/prow/pluginhelp"
 	"k8s.io/test-infra/prow/plugins"
 )
 
 var (
-	lifecycleActiveLabel = "lifecycle/active"
-	lifecycleFrozenLabel = "lifecycle/frozen"
-	lifecycleStaleLabel  = "lifecycle/stale"
-	lifecycleRottenLabel = "lifecycle/rotten"
-	lifecycleLabels      = []string{lifecycleActiveLabel, lifecycleFrozenLabel, lifecycleStaleLabel, lifecycleRottenLabel}
-	lifecycleRe          = regexp.MustCompile(`(?mi)^/(remove-)?lifecycle (active|frozen|stale|rotten)\s*$`)
+	lifecycleLabels = []string{labels.LifecycleActive, labels.LifecycleFrozen, labels.LifecycleStale, labels.LifecycleRotten}
+	lifecycleRe     = regexp.MustCompile(`(?mi)^/(remove-)?lifecycle (active|frozen|stale|rotten)\s*$`)
 )
 
 func init() {
@@ -73,7 +70,7 @@ type lifecycleClient interface {
 	GetIssueLabels(org, repo string, number int) ([]github.Label, error)
 }
 
-func lifecycleHandleGenericComment(pc plugins.PluginClient, e github.GenericCommentEvent) error {
+func lifecycleHandleGenericComment(pc plugins.Agent, e github.GenericCommentEvent) error {
 	gc := pc.GitHubClient
 	log := pc.Logger
 	if err := handleReopen(gc, log, &e); err != nil {
