@@ -8,7 +8,7 @@
 % endblock
 % block header
 <div>
-<h1>{% if pr and pr != "batch"  %}<a href="/pr/{{pr_path}}{{pr}}">{% if repo != "kubernetes/kubernetes"%}{{repo}} {% endif %}PR #{{pr}}</a> {% endif %}
+<h1>{% if pr and pr != "batch"  %}<a href="/pr/{{pr_path}}{{pr}}">{% if repo != "kubernetes/kubernetes"%}{{repo}} {% endif %}PR #{{pr}}</a> (<a href="https://github.com/{{repo}}/pull/{{pr}}">GitHub</a>){% endif %}
 	<span>
 	% if testgrid_query
 		<a href="{{testgrid_query|tg_url}}">{{job}}</a>
@@ -45,7 +45,6 @@
 		% endif
 		<tr><td>Started<td>{{started['timestamp']|timestamp}}
 		{% if finished %}<tr><td>Elapsed<td>{{(finished['timestamp']-started['timestamp'])|duration}}{% endif %}
-		<tr><td>Version<td><a href="https://github.com/{{repo}}/commit/{{commit}}">{{started['version'] or finished['version']}}</a>
 		% if 'jenkins-node' in started
 			<tr><td>Builder<td>{{started['jenkins-node']}}
 		% endif
@@ -60,6 +59,22 @@
 				{%- if sha %}:{{sha|github_commit_link(repo)}}{% endif %}<br>
 			{%- endfor %}
 		% endif
+
+		% if 'metadata' in started
+			% for k, v in started['metadata']|dictsort
+				% if v
+					<tr><td>{{k}}<td>{{v|maybe_linkify}}
+				% endif
+			% endfor
+		% endif
+		% if finished and 'metadata' in finished and finished['metadata']
+			% for k, v in finished['metadata']|dictsort
+				% if v
+					<tr><td>{{k}}<td>{{v|maybe_linkify}}
+				% endif
+			% endfor
+		% endif
+
 	% endif
 	</table>
 	<ul class="nav">
