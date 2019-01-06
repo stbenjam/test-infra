@@ -261,9 +261,18 @@ class BuildHandler(view_base.BaseHandler):
 
         issues = list(models.GHIssueDigest.find_xrefs(build_dir))
 
-        refs = []
+        # openshift does not have a pull string because the entrypoint does not
+        # set it into started
+        ref_string = ""
         if started and 'pull' in started:
-            for ref in started['pull'].split(','):
+            ref_string = started['pull']
+        if len(ref_string) == 0 and finished and 'metadata' in finished and 'repos' in finished['metadata']:
+            if repo in finished['metadata']['repos']:
+                ref_string = finished['metadata']['repos'][repo]
+
+        refs = []
+        if len(ref_string) > 0:
+            for ref in ref_string.split(','):
                 x = ref.split(':', 1)
                 if len(x) == 2:
                     refs.append((x[0], x[1]))
