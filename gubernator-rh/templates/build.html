@@ -48,6 +48,9 @@
 		% if 'jenkins-node' in started
 			<tr><td>Builder<td>{{started['jenkins-node']}}
 		% endif
+		% if work_namespace
+			<tr><td>Work namespace<td><a href="https://api.ci.openshift.org/console/project/{{work_namespace}}/browse/pods">{{work_namespace}}</a>
+		% endif
 		% if refs
 			<tr><td>Refs<td>
 			% for name, sha in refs
