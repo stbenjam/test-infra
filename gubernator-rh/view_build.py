@@ -269,6 +269,7 @@ class BuildHandler(view_base.BaseHandler):
         if len(ref_string) == 0 and finished and 'metadata' in finished and 'repos' in finished['metadata']:
             if repo in finished['metadata']['repos']:
                 ref_string = finished['metadata']['repos'][repo]
+                del finished['metadata']['repos'][repo]
 
         refs = []
         if len(ref_string) > 0:
@@ -279,10 +280,16 @@ class BuildHandler(view_base.BaseHandler):
                 else:
                     refs.append((x[1], ''))
 
+        work_namespace = ""
+        if finished and 'metadata' in finished and finished['metadata'] and 'work-namespace' in finished['metadata']:
+            work_namespace = finished['metadata']['work-namespace']
+            del finished['metadata']['work-namespace']
+
         self.render('build.html', dict(
             job_dir=job_dir, build_dir=build_dir, job=job, build=build,
             commit=commit, started=started, finished=finished,
             res=results, refs=refs,
+            work_namespace=work_namespace,
             build_log=build_log, build_log_src=build_log_src,
             issues=issues, repo=repo,
             pr_path=pr_path, pr=pr, pr_digest=pr_digest,
