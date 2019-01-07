@@ -266,7 +266,7 @@ class BuildHandler(view_base.BaseHandler):
         ref_string = ""
         if started and 'pull' in started:
             ref_string = started['pull']
-        if len(ref_string) == 0 and finished and 'metadata' in finished and 'repos' in finished['metadata']:
+        if len(ref_string) == 0 and finished and 'metadata' in finished and 'repos' in finished['metadata'] and finished['metadata']['repos']:
             if repo in finished['metadata']['repos']:
                 ref_string = finished['metadata']['repos'][repo]
                 del finished['metadata']['repos'][repo]
