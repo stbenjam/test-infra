@@ -119,7 +119,7 @@ def normalize_metadata(started_future, finished_future):
 
     :param started_future: future from gcs_async.read()
     :param finished_future: future from gcs_async.read()
-    :return: started, finished dictionaries
+    :return: started, finished, metadata dictionaries
     """
     started = started_future.get_result()
     finished = finished_future.get_result()
@@ -128,7 +128,7 @@ def normalize_metadata(started_future, finished_future):
     elif started and not finished:
         finished = 'null'
     elif not (started and finished):
-        return None, None
+        return None, None, {}
     started = json.loads(started)
     finished = json.loads(finished)
 
@@ -142,7 +142,14 @@ def normalize_metadata(started_future, finished_future):
         if 'passed' in finished and 'result' not in finished:
             finished['result'] = 'SUCCESS' if finished['passed'] else 'FAILURE'
 
-    return started, finished
+    # metadata in started and finished is layered
+    metadata = {}
+    for m in [started, finished]:
+        if m and 'metadata' in m and m['metadata']:
+            for k, v in m['metadata'].items():
+                metadata[k] = v
+
+    return started, finished, metadata
 
 
 @view_base.memcache_memoize('build-details://', expires=60)
@@ -160,13 +167,13 @@ def build_details(build_dir):
                   skipped: [name...],
                   passed: [name...]}
     """
-    started, finished = normalize_metadata(
+    started, finished, metadata = normalize_metadata(
         gcs_async.read(build_dir + '/started.json'),
         gcs_async.read(build_dir + '/finished.json')
     )
 
     if started is None and finished is None:
-        return started, finished, None
+        return started, finished, {}, None
 
     junit_paths = [f.filename for f in view_base.gcs_ls_recursive('%s/artifacts' % build_dir)
                    if f.filename.endswith('.xml')]
@@ -176,7 +183,7 @@ def build_details(build_dir):
     parser = JUnitParser()
     for path, future in junit_futures.iteritems():
         parser.parse_xml(future.get_result(), path)
-    return started, finished, parser.get_results()
+    return started, finished, metadata, parser.get_results()
 
 
 def parse_pr_path(gcs_path, default_org, default_repo):
@@ -226,7 +233,7 @@ class BuildHandler(view_base.BaseHandler):
         job_dir = '/%s/%s/' % (prefix, job)
         testgrid_query = testgrid.path_to_query(job_dir)
         build_dir = job_dir + build
-        started, finished, results = build_details(build_dir)
+        started, finished, metadata, results = build_details(build_dir)
         if started is None and finished is None:
             logging.warning('unable to load %s', build_dir)
             self.render(
@@ -264,12 +271,12 @@ class BuildHandler(view_base.BaseHandler):
         # openshift does not have a pull string because the entrypoint does not
         # set it into started
         ref_string = ""
-        if started and 'pull' in started:
+        if 'repos' in metadata and metadata['repos']:
+            if repo in metadata['repos']:
+                ref_string = metadata['repos'][repo]
+                del metadata['repos'][repo]
+        if len(ref_string) == 0 and started and 'pull' in started:
             ref_string = started['pull']
-        if len(ref_string) == 0 and finished and 'metadata' in finished and 'repos' in finished['metadata'] and finished['metadata']['repos']:
-            if repo in finished['metadata']['repos']:
-                ref_string = finished['metadata']['repos'][repo]
-                del finished['metadata']['repos'][repo]
 
         refs = []
         if len(ref_string) > 0:
@@ -281,13 +288,13 @@ class BuildHandler(view_base.BaseHandler):
                     refs.append((x[1], ''))
 
         work_namespace = ""
-        if finished and 'metadata' in finished and finished['metadata'] and 'work-namespace' in finished['metadata']:
-            work_namespace = finished['metadata']['work-namespace']
-            del finished['metadata']['work-namespace']
+        if 'work-namespace' in metadata:
+            work_namespace = metadata['work-namespace']
+            del metadata['work-namespace']
 
         self.render('build.html', dict(
             job_dir=job_dir, build_dir=build_dir, job=job, build=build,
-            commit=commit, started=started, finished=finished,
+            commit=commit, started=started, finished=finished, metadata=metadata,
             res=results, refs=refs,
             work_namespace=work_namespace,
             build_log=build_log, build_log_src=build_log_src,
@@ -392,7 +399,7 @@ def build_list(job_dir, before):
 
     output = []
     for build, loc, started_future, finished_future in build_futures:
-        started, finished = normalize_metadata(started_future, finished_future)
+        started, finished, metadata = normalize_metadata(started_future, finished_future)
         output.append((str(build), loc, started, finished))
 
     return output

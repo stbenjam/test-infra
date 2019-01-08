@@ -49,7 +49,7 @@ def pr_builds(path):
 
     jobs = {}
     for job, build, started_fut, finished_fut in futures:
-        started, finished = view_build.normalize_metadata(started_fut, finished_fut)
+        started, finished, metadata = view_build.normalize_metadata(started_fut, finished_fut)
         jobs.setdefault(job, []).append((build, started, finished))
 
     return jobs
