@@ -35,7 +35,6 @@ import (
 
 	"k8s.io/test-infra/prow/git"
 	"k8s.io/test-infra/prow/github"
-	"k8s.io/test-infra/prow/hook"
 	"k8s.io/test-infra/prow/plugins"
 )
 
@@ -102,7 +101,7 @@ func NewServer(hmac func() []byte, gc *git.Client, ghc *github.Client, configAge
 
 // ServeHTTP validates an incoming webhook and puts it into the event channel.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	eventType, eventGUID, payload, ok := hook.ValidateWebhook(w, r, s.hmacSecret())
+	eventType, eventGUID, payload, ok, _ := github.ValidateWebhook(w, r, s.hmacSecret())
 	if !ok {
 		s.log.Error("Failed to validate payload")
 		return
