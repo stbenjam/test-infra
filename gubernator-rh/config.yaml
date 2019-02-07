@@ -1,4 +1,9 @@
 ---
+default_external_services:
+  gcs_bucket: origin-ci-test/
+  gcs_pull_prefix: origin-ci-test/pr-logs/pull
+  prow_url: deck-ci.svc.ci.openshift.org
+  spyglass: false
 default_org: openshift
 default_repo: origin
 external_services:

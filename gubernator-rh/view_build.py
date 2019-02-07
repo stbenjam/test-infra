@@ -250,10 +250,16 @@ class BuildHandler(view_base.BaseHandler):
             want_build_log = True
             build_log = get_build_log(build_dir)
 
-        pr, pr_path, pr_digest, repo = None, None, None, None
-        external_config = get_pr_config(prefix, self.app.config)
+        pr, pr_path, pr_digest = None, None, None
+        repo = '%s/%s' % (self.app.config['default_org'],
+                          self.app.config['default_repo'])
+        spyglass_link = ''
+        external_config = get_build_config(prefix, self.app.config)
         if external_config is not None:
-            pr, pr_path, pr_digest, repo = get_pr_info(prefix, self.app.config)
+            if external_config.get('spyglass'):
+                spyglass_link = 'https://' + external_config['prow_url'] + '/view/gcs/' + build_dir
+            if '/pull/' in prefix:
+                pr, pr_path, pr_digest, repo = get_pr_info(prefix, self.app.config)
             if want_build_log and not build_log:
                 build_log, build_log_src = get_running_build_log(job, build,
                                                                  external_config["prow_url"])
@@ -303,9 +309,11 @@ class BuildHandler(view_base.BaseHandler):
             testgrid_query=testgrid_query))
 
 
-def get_pr_config(prefix, config):
-    for item in config["external_services"].values():
-        if prefix.startswith(item["gcs_pull_prefix"]):
+def get_build_config(prefix, config):
+    for item in config['external_services'].values() + [config['default_external_services']]:
+        if prefix.startswith(item['gcs_pull_prefix']):
+            return item
+        if 'gcs_bucket' in item and prefix.startswith(item['gcs_bucket']):
             return item
 
 def get_pr_info(prefix, config):
