@@ -150,7 +150,7 @@ def normalize_metadata(started_future, finished_future):
                 metadata[k] = v
 
     # legacy behavior for normalization
-    if 'repo' in metadata and 'repos' in metadata and metadata['repo'] in metadata['repos']:
+    if 'repo' in metadata and 'repos' in metadata and metadata['repo'] and metadata['repos'] and metadata['repo'] in metadata['repos']:
         started['pull'] = metadata['repos'][metadata['repo']]
 
     return started, finished, metadata
