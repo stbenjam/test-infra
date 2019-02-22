@@ -70,9 +70,10 @@ type WindowsProfile struct {
 }
 
 type KubernetesConfig struct {
-	CustomWindowsPackageURL string `json:"customWindowsPackageURL,omitempty"`
-	CustomHyperkubeImage    string `json:"customHyperkubeImage,omitempty"`
-	NetworkPlugin           string `json:"networkPlugin,omitempty"`
+	CustomWindowsPackageURL    string `json:"customWindowsPackageURL,omitempty"`
+	CustomHyperkubeImage       string `json:"customHyperkubeImage,omitempty"`
+	NetworkPlugin              string `json:"networkPlugin,omitempty"`
+	PrivateAzureRegistryServer string `json:"privateAzureRegistryServer,omitempty"`
 }
 type OrchestratorProfile struct {
 	OrchestratorType    string            `json:"orchestratorType"`
@@ -82,6 +83,7 @@ type OrchestratorProfile struct {
 
 type MasterProfile struct {
 	Count          int                 `json:"count"`
+	Distro         string              `json:"distro"`
 	DNSPrefix      string              `json:"dnsPrefix"`
 	VMSize         string              `json:"vmSize" validate:"required"`
 	IPAddressCount int                 `json:"ipAddressCount,omitempty"`
@@ -91,6 +93,7 @@ type MasterProfile struct {
 type AgentPoolProfile struct {
 	Name                  string              `json:"name"`
 	Count                 int                 `json:"count"`
+	Distro                string              `json:"distro"`
 	VMSize                string              `json:"vmSize"`
 	OSType                string              `json:"osType,omitempty"`
 	AvailabilityProfile   string              `json:"availabilityProfile"`

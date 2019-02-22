@@ -26,9 +26,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/sets"
 
+	prowapi "k8s.io/test-infra/prow/apis/prowjobs/v1"
 	"k8s.io/test-infra/prow/config"
 	"k8s.io/test-infra/prow/github"
-	"k8s.io/test-infra/prow/kube"
 )
 
 const (
@@ -133,8 +133,8 @@ func (c *fakeClient) GetRef(org, repo, ref string) (string, error) {
 	return fakeBaseSHA, nil
 }
 
-func (c *fakeClient) CreateProwJob(pj kube.ProwJob) (kube.ProwJob, error) {
-	if s := pj.Status.State; s != kube.SuccessState {
+func (c *fakeClient) Create(pj *prowapi.ProwJob) (*prowapi.ProwJob, error) {
+	if s := pj.Status.State; s != prowapi.SuccessState {
 		return pj, fmt.Errorf("bad status state: %s", s)
 	}
 	if pj.Spec.Context == "fail-create" {
@@ -145,11 +145,11 @@ func (c *fakeClient) CreateProwJob(pj kube.ProwJob) (kube.ProwJob, error) {
 }
 
 func (c *fakeClient) presubmitForContext(org, repo, context string) *config.Presubmit {
-	if p, ok := c.presubmits[context]; !ok {
+	p, ok := c.presubmits[context]
+	if !ok {
 		return nil
-	} else {
-		return &p
 	}
+	return &p
 }
 
 func TestAuthorized(t *testing.T) {
@@ -412,7 +412,9 @@ func TestHandle(t *testing.T) {
 			},
 			presubmits: map[string]config.Presubmit{
 				"prow-job": {
-					Context: "prow-job",
+					Reporter: config.Reporter{
+						Context: "prow-job",
+					},
 				},
 			},
 			jobs: sets.NewString("prow-job"),

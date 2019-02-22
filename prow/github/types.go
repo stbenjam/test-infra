@@ -146,10 +146,11 @@ type CombinedStatus struct {
 
 // User is a GitHub user account.
 type User struct {
-	Login string `json:"login"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	ID    int    `json:"id"`
+	Login   string `json:"login"`
+	Name    string `json:"name"`
+	Email   string `json:"email"`
+	ID      int    `json:"id"`
+	HTMLURL string `json:"html_url"`
 }
 
 // NormLogin normalizes GitHub login strings
@@ -332,6 +333,38 @@ type Restrictions struct {
 	Users *[]string `json:"users,omitempty"`
 	Teams *[]string `json:"teams,omitempty"`
 }
+
+// HookConfig holds the endpoint and its secret.
+type HookConfig struct {
+	URL         string  `json:"url"`
+	ContentType *string `json:"content_type,omitempty"`
+	Secret      *string `json:"secret,omitempty"`
+}
+
+// Hook holds info about the webhook configuration.
+type Hook struct {
+	ID     int        `json:"id"`
+	Name   string     `json:"name"`
+	Events []string   `json:"events"`
+	Active bool       `json:"active"`
+	Config HookConfig `json:"config"`
+}
+
+// HookRequest can create and/or edit a webhook.
+//
+// AddEvents and RemoveEvents are only valid during an edit, and only for a repo
+type HookRequest struct {
+	Name         string      `json:"name,omitempty"` // must be web or "", only create
+	Active       *bool       `json:"active,omitempty"`
+	AddEvents    []string    `json:"add_events,omitempty"` // only repo edit
+	Config       *HookConfig `json:"config,omitempty"`
+	Events       []string    `json:"events,omitempty"`
+	RemoveEvents []string    `json:"remove_events,omitempty"` // only repo edit
+}
+
+// AllHookEvents causes github to send all events.
+// https://developer.github.com/v3/activity/events/types/
+var AllHookEvents = []string{"*"}
 
 // IssueEventAction enumerates the triggers for this
 // webhook payload type. See also:
