@@ -26,8 +26,12 @@ import (
 
 const botName = "k8s-ci-robot"
 
-// Bot is the exported botName
-const Bot = botName
+const (
+	// Bot is the exported botName
+	Bot = botName
+	// TestRef is the ref returned when calling GetRef
+	TestRef = "abcde"
+)
 
 // FakeClient is like client, but fake.
 type FakeClient struct {
@@ -76,6 +80,9 @@ type FakeClient struct {
 	// Fake remote git storage. File name are keys
 	// and values map SHA to content
 	RemoteFiles map[string]map[string]string
+
+	// A list of refs that got deleted via DeleteRef
+	RefsDeleted []struct{ Org, Repo, Ref string }
 }
 
 // BotName returns authenticated login.
@@ -179,7 +186,11 @@ func (f *FakeClient) DeleteStaleComments(org, repo string, number int, comments 
 
 // GetPullRequest returns details about the PR.
 func (f *FakeClient) GetPullRequest(owner, repo string, number int) (*github.PullRequest, error) {
-	return f.PullRequests[number], nil
+	val, exists := f.PullRequests[number]
+	if !exists {
+		return nil, fmt.Errorf("Pull request number %d does not exit", number)
+	}
+	return val, nil
 }
 
 // GetPullRequestChanges returns the file modifications in a PR.
@@ -189,7 +200,13 @@ func (f *FakeClient) GetPullRequestChanges(org, repo string, number int) ([]gith
 
 // GetRef returns the hash of a ref.
 func (f *FakeClient) GetRef(owner, repo, ref string) (string, error) {
-	return "abcde", nil
+	return TestRef, nil
+}
+
+// DeleteRef returns an error indicating if deletion of the given ref was successful
+func (f *FakeClient) DeleteRef(owner, repo, ref string) error {
+	f.RefsDeleted = append(f.RefsDeleted, struct{ Org, Repo, Ref string }{Org: owner, Repo: repo, Ref: ref})
+	return nil
 }
 
 // GetSingleCommit returns a single commit.

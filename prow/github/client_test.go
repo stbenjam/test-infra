@@ -341,6 +341,23 @@ func TestGetRef(t *testing.T) {
 	}
 }
 
+func TestDeleteRef(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("Bad method: %s", r.Method)
+		}
+		if r.URL.Path != "/repos/k8s/kuber/git/refs/heads/my-feature" {
+			t.Errorf("Bad request path: %s", r.URL.Path)
+		}
+		http.Error(w, "204 No Content", http.StatusNoContent)
+	}))
+	defer ts.Close()
+	c := getClient(ts.URL)
+	if err := c.DeleteRef("k8s", "kuber", "heads/my-feature"); err != nil {
+		t.Errorf("Didn't expect error: %v", err)
+	}
+}
+
 func TestGetSingleCommit(t *testing.T) {
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -493,9 +510,6 @@ func TestRemoveLabelFailsOnOtherThan404(t *testing.T) {
 	if err == nil {
 		t.Errorf("Expected error but got none")
 	}
-	if _, ok := err.(*LabelNotFound); ok {
-		t.Fatalf("Expected error not to be a 404: %v", err)
-	}
 }
 
 func TestRemoveLabelNotFound(t *testing.T) {
@@ -506,12 +520,8 @@ func TestRemoveLabelNotFound(t *testing.T) {
 	c := getClient(ts.URL)
 	err := c.RemoveLabel("any", "old", 3, "label")
 
-	if err == nil {
-		t.Fatalf("RemoveLabel expected an error, got none")
-	}
-
-	if _, ok := err.(*LabelNotFound); !ok {
-		t.Fatalf("RemoveLabel expected LabelNotFound error, got %v", err)
+	if err != nil {
+		t.Fatalf("RemoveLabel expected no error, got one: %v", err)
 	}
 }
 

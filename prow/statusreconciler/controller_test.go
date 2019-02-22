@@ -39,10 +39,12 @@ func TestAddedBlockingPresubmits(t *testing.T) {
 			name: "no change in blocking presubmits means no added blocking jobs",
 			old: `"org/repo":
 - name: old-job
-  context: old-context`,
+  context: old-context
+  always_run: true`,
 			new: `"org/repo":
 - name: old-job
-  context: old-context`,
+  context: old-context
+  always_run: true`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {},
 			},
@@ -51,12 +53,15 @@ func TestAddedBlockingPresubmits(t *testing.T) {
 			name: "added optional presubmit means no added blocking jobs",
 			old: `"org/repo":
 - name: old-job
-  context: old-context`,
+  context: old-context
+  always_run: true`,
 			new: `"org/repo":
 - name: old-job
   context: old-context
+  always_run: true
 - name: new-job
   context: new-context
+  always_run: true
   optional: true`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {},
@@ -66,13 +71,33 @@ func TestAddedBlockingPresubmits(t *testing.T) {
 			name: "added non-reporting presubmit means no added blocking jobs",
 			old: `"org/repo":
 - name: old-job
-  context: old-context`,
+  context: old-context
+  always_run: true`,
 			new: `"org/repo":
 - name: old-job
   context: old-context
+  always_run: true
 - name: new-job
   context: new-context
+  always_run: true
   skip_report: true`,
+			expected: map[string][]config.Presubmit{
+				"org/repo": {},
+			},
+		},
+		{
+			name: "added presubmit that needs a manual trigger means no added blocking jobs",
+			old: `"org/repo":
+- name: old-job
+  context: old-context
+  always_run: true`,
+			new: `"org/repo":
+- name: old-job
+  context: old-context
+  always_run: true
+- name: new-job
+  context: new-context
+  always_run: false`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {},
 			},
@@ -81,18 +106,24 @@ func TestAddedBlockingPresubmits(t *testing.T) {
 			name: "added required presubmit means added blocking jobs",
 			old: `"org/repo":
 - name: old-job
-  context: old-context`,
+  context: old-context
+  always_run: true`,
 			new: `"org/repo":
 - name: old-job
   context: old-context
+  always_run: true
 - name: new-job
-  context: new-context`,
+  context: new-context
+  always_run: true`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {{
-					JobBase:    config.JobBase{Name: "new-job"},
-					Context:    "new-context",
-					Optional:   false,
-					SkipReport: false,
+					JobBase: config.JobBase{Name: "new-job"},
+					Reporter: config.Reporter{
+						Context:    "new-context",
+						SkipReport: false,
+					},
+					AlwaysRun: true,
+					Optional:  false,
 				}},
 			},
 		},
@@ -101,10 +132,12 @@ func TestAddedBlockingPresubmits(t *testing.T) {
 			old: `"org/repo":
 - name: old-job
   context: old-context
+  always_run: true
   optional: true`,
 			new: `"org/repo":
 - name: old-job
-  context: old-context`,
+  context: old-context
+  always_run: true`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {},
 			},
@@ -114,14 +147,70 @@ func TestAddedBlockingPresubmits(t *testing.T) {
 			old: `"org/repo":
 - name: old-job
   context: old-context
+  always_run: true
   skip_report: true`,
 			new: `"org/repo":
 - name: old-job
-  context: old-context`,
+  context: old-context
+  always_run: true`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {{
-					JobBase: config.JobBase{Name: "old-job"},
-					Context: "old-context",
+					JobBase:   config.JobBase{Name: "old-job"},
+					Reporter:  config.Reporter{Context: "old-context"},
+					AlwaysRun: true,
+				}},
+			},
+		},
+		{
+			name: "required presubmit transitioning run_if_changed means added blocking jobs",
+			old: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: old-changes`,
+			new: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: new-changes`,
+			expected: map[string][]config.Presubmit{
+				"org/repo": {{
+					JobBase:             config.JobBase{Name: "old-job"},
+					Reporter:            config.Reporter{Context: "old-context"},
+					RegexpChangeMatcher: config.RegexpChangeMatcher{RunIfChanged: "new-changes"},
+				}},
+			},
+		},
+		{
+			name: "optional presubmit transitioning run_if_changed means no added blocking jobs",
+			old: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: old-changes
+  optional: true`,
+			new: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: new-changes
+  optional: true`,
+			expected: map[string][]config.Presubmit{
+				"org/repo": {},
+			},
+		},
+		{
+			name: "optional presubmit transitioning to required run_if_changed means added blocking jobs",
+			old: `"org/repo":
+- name: old-job
+  context: old-context
+  always_run: true
+  optional: true`,
+			new: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: changes`,
+			expected: map[string][]config.Presubmit{
+				"org/repo": {{
+					JobBase:             config.JobBase{Name: "old-job"},
+					Reporter:            config.Reporter{Context: "old-context"},
+					RegexpChangeMatcher: config.RegexpChangeMatcher{RunIfChanged: "changes"},
 				}},
 			},
 		},
@@ -129,10 +218,12 @@ func TestAddedBlockingPresubmits(t *testing.T) {
 			name: "required presubmit transitioning to new context means no added blocking jobs",
 			old: `"org/repo":
 - name: old-job
-  context: old-context`,
+  context: old-context
+  always_run: true`,
 			new: `"org/repo":
 - name: old-job
-  context: new-context`,
+  context: new-context
+  always_run: true`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {},
 			},
@@ -203,8 +294,8 @@ func TestRemovedBlockingPresubmits(t *testing.T) {
 			new: `"org/repo": []`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {{
-					JobBase: config.JobBase{Name: "old-job"},
-					Context: "old-context",
+					JobBase:  config.JobBase{Name: "old-job"},
+					Reporter: config.Reporter{Context: "old-context"},
 				}},
 			},
 		},
@@ -242,8 +333,8 @@ func TestRemovedBlockingPresubmits(t *testing.T) {
 			new: `{}`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {{
-					JobBase: config.JobBase{Name: "old-job"},
-					Context: "old-context",
+					JobBase:  config.JobBase{Name: "old-job"},
+					Reporter: config.Reporter{Context: "old-context"},
 				}},
 			},
 		},
@@ -255,6 +346,34 @@ func TestRemovedBlockingPresubmits(t *testing.T) {
 			new: `"org/repo":
 - name: old-job
   context: new-context`,
+			expected: map[string][]config.Presubmit{
+				"org/repo": {},
+			},
+		},
+		{
+			name: "required presubmit transitioning run_if_changed means no removed blocking jobs",
+			old: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: old-changes`,
+			new: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: new-changes`,
+			expected: map[string][]config.Presubmit{
+				"org/repo": {},
+			},
+		},
+		{
+			name: "optional presubmit transitioning to required run_if_changed means no removed blocking jobs",
+			old: `"org/repo":
+- name: old-job
+  context: old-context
+  optional: true`,
+			new: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: changes`,
 			expected: map[string][]config.Presubmit{
 				"org/repo": {},
 			},
@@ -374,14 +493,42 @@ func TestMigratedBlockingPresubmits(t *testing.T) {
 			expected: map[string][]presubmitMigration{
 				"org/repo": {{
 					from: config.Presubmit{
-						JobBase: config.JobBase{Name: "old-job"},
-						Context: "old-context",
+						JobBase:  config.JobBase{Name: "old-job"},
+						Reporter: config.Reporter{Context: "old-context"},
 					},
 					to: config.Presubmit{
-						JobBase: config.JobBase{Name: "old-job"},
-						Context: "new-context",
+						JobBase:  config.JobBase{Name: "old-job"},
+						Reporter: config.Reporter{Context: "new-context"},
 					},
 				}},
+			},
+		},
+		{
+			name: "required presubmit transitioning run_if_changed means no removed blocking jobs",
+			old: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: old-changes`,
+			new: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: new-changes`,
+			expected: map[string][]presubmitMigration{
+				"org/repo": {},
+			},
+		},
+		{
+			name: "optional presubmit transitioning to required run_if_changed means no removed blocking jobs",
+			old: `"org/repo":
+- name: old-job
+  context: old-context
+  optional: true`,
+			new: `"org/repo":
+- name: old-job
+  context: old-context
+  run_if_changed: changes`,
+			expected: map[string][]presubmitMigration{
+				"org/repo": {},
 			},
 		},
 	}
@@ -447,7 +594,7 @@ type fakeMigrator struct {
 	migrated map[orgRepo]migrationSet
 }
 
-func (m *fakeMigrator) retire(org, repo, context string) error {
+func (m *fakeMigrator) retire(org, repo, context string, targetBranchFilter func(string) bool) error {
 	key := orgRepo{org: org, repo: repo}
 	if contexts, exist := m.retireErrors[key]; exist && contexts.Has(context) {
 		return errors.New("failed to retire context")
@@ -460,7 +607,7 @@ func (m *fakeMigrator) retire(org, repo, context string) error {
 	return nil
 }
 
-func (m *fakeMigrator) migrate(org, repo, from, to string) error {
+func (m *fakeMigrator) migrate(org, repo, from, to string, targetBranchFilter func(string) bool) error {
 	key := orgRepo{org: org, repo: repo}
 	item := migration{from: from, to: to}
 	if contexts, exist := m.migrateErrors[key]; exist && contexts.has(item) {
@@ -493,7 +640,7 @@ type fakeProwJobTriggerer struct {
 	created map[prKey]sets.String
 }
 
-func (c *fakeProwJobTriggerer) runOrSkip(pr *github.PullRequest, requestedJobs []config.Presubmit) error {
+func (c *fakeProwJobTriggerer) run(pr *github.PullRequest, requestedJobs []config.Presubmit) error {
 	names := sets.NewString()
 	key := prKey{org: pr.Base.Repo.Owner.Login, repo: pr.Base.Repo.Name, num: pr.Number}
 	for _, job := range requestedJobs {
@@ -586,14 +733,18 @@ func TestControllerReconcile(t *testing.T) {
   "org/repo":
   - name: required-job
     context: required-job
+    always_run: true
   - name: other-required-job
-    context: other-required-job`
+    context: other-required-job
+    always_run: true`
 	newConfigData := `presubmits:
   "org/repo":
   - name: other-required-job
     context: new-context
+    always_run: true
   - name: new-required-job
-    context: new-required-context`
+    context: new-required-context
+    always_run: true`
 
 	var oldConfig, newConfig config.Config
 	if err := yaml.Unmarshal([]byte(oldConfigData), &oldConfig); err != nil {
@@ -602,7 +753,7 @@ func TestControllerReconcile(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(newConfigData), &newConfig); err != nil {
 		t.Fatalf("could not unmarshal new config: %v", err)
 	}
-	delta := config.ConfigDelta{Before: oldConfig, After: newConfig}
+	delta := config.Delta{Before: oldConfig, After: newConfig}
 	migrate := migration{from: "other-required-job", to: "new-context"}
 	org, repo := "org", "repo"
 	orgRepoKey := orgRepo{org: org, repo: repo}

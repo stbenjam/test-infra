@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -36,6 +37,7 @@ import (
 )
 
 const (
+	// PluginName defines this plugin's registered name.
 	PluginName     = "verify-owners"
 	ownersFileName = "OWNERS"
 )
@@ -45,14 +47,21 @@ func init() {
 }
 
 func helpProvider(config *plugins.Configuration, enabledRepos []string) (*pluginhelp.PluginHelp, error) {
-	return &pluginhelp.PluginHelp{
-			Description: fmt.Sprintf("The verify-owners plugin validates %s files if they are modified in a PR. On validation failure it automatically adds the '%s' label to the PR, and a review comment on the incriminating file(s).", ownersFileName, labels.InvalidOwners),
-		},
-		nil
+	pluginHelp := &pluginhelp.PluginHelp{
+		Description: fmt.Sprintf("The verify-owners plugin validates %s files if they are modified in a PR. On validation failure it automatically adds the '%s' label to the PR, and a review comment on the incriminating file(s).", ownersFileName, labels.InvalidOwners),
+	}
+	if config.Owners.LabelsBlackList != nil {
+		pluginHelp.Config = map[string]string{
+			"": fmt.Sprintf(`The verify-owners plugin will complain if %s files contain any of the following blacklisted labels: %s.`,
+				ownersFileName,
+				strings.Join(config.Owners.LabelsBlackList, ", ")),
+		}
+	}
+	return pluginHelp, nil
 }
 
 type ownersClient interface {
-	LoadRepoOwners(org, repo, base string) (repoowners.RepoOwnerInterface, error)
+	LoadRepoOwners(org, repo, base string) (repoowners.RepoOwner, error)
 }
 
 type githubClient interface {
@@ -110,6 +119,12 @@ func handle(ghc githubClient, gc *git.Client, log *logrus.Entry, pre *github.Pul
 	if err := r.CheckoutPullRequest(pre.Number); err != nil {
 		return err
 	}
+	// If we have a specific SHA, use it.
+	if pre.PullRequest.Head.SHA != "" {
+		if err := r.Checkout(pre.PullRequest.Head.SHA); err != nil {
+			return err
+		}
+	}
 
 	// Check each OWNERS file.
 	for _, c := range modifiedOwnersFiles {
@@ -117,7 +132,7 @@ func handle(ghc githubClient, gc *git.Client, log *logrus.Entry, pre *github.Pul
 		path := filepath.Join(r.Dir, c.Filename)
 		b, err := ioutil.ReadFile(path)
 		if err != nil {
-			log.WithError(err).Errorf("Failed to read %s.", path)
+			log.WithError(err).Warningf("Failed to read %s.", path)
 			return nil
 		}
 		var approvers []string
@@ -211,12 +226,8 @@ func handle(ghc githubClient, gc *git.Client, log *logrus.Entry, pre *github.Pul
 	} else {
 		// Don't bother checking if it has the label...it's a race, and we'll have
 		// to handle failure due to not being labeled anyway.
-		labelNotFound := true
 		if err := ghc.RemoveLabel(org, repo, pre.Number, labels.InvalidOwners); err != nil {
-			if _, labelNotFound = err.(*github.LabelNotFound); !labelNotFound {
-				return fmt.Errorf("failed removing %s label: %v", labels.InvalidOwners, err)
-			}
-			// If the error is indeed *github.LabelNotFound, consider it a success.
+			return fmt.Errorf("failed removing %s label: %v", labels.InvalidOwners, err)
 		}
 	}
 	return nil

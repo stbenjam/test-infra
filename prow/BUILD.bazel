@@ -14,6 +14,7 @@ container_bundle(
         "artifact-uploader",
         "branchprotector",
         "build",
+        "checkconfig",
         "clonerefs",
         "deck",
         "entrypoint",
@@ -29,6 +30,7 @@ container_bundle(
         "sidecar",
         "sinker",
         "status-reconciler",
+        "sub",
         "tide",
         "tot",
     ) + image_tags(**{
@@ -38,7 +40,6 @@ container_bundle(
     }) + image_tags(**{
         prefix("refresh"): "//prow/external-plugins/refresh:image",
     }),
-    stamp = True,
 )
 
 docker_push(
@@ -74,6 +75,7 @@ filegroup(
         "//prow/cmd/build:all-srcs",
         "//prow/cmd/checkconfig:all-srcs",
         "//prow/cmd/clonerefs:all-srcs",
+        "//prow/cmd/config-bootstrapper:all-srcs",
         "//prow/cmd/crier:all-srcs",
         "//prow/cmd/deck:all-srcs",
         "//prow/cmd/entrypoint:all-srcs",
@@ -93,6 +95,8 @@ filegroup(
         "//prow/cmd/sidecar:all-srcs",
         "//prow/cmd/sinker:all-srcs",
         "//prow/cmd/status-reconciler:all-srcs",
+        "//prow/cmd/sub:all-srcs",
+        "//prow/cmd/tackle:all-srcs",
         "//prow/cmd/tide:all-srcs",
         "//prow/cmd/tot:all-srcs",
         "//prow/cmd/util:all-srcs",
@@ -113,6 +117,7 @@ filegroup(
         "//prow/gerrit/client:all-srcs",
         "//prow/gerrit/reporter:all-srcs",
         "//prow/git:all-srcs",
+        "//prow/gitattributes:all-srcs",
         "//prow/github:all-srcs",
         "//prow/githuboauth:all-srcs",
         "//prow/hook:all-srcs",
@@ -135,8 +140,8 @@ filegroup(
         "//prow/pod-utils/wrapper:all-srcs",
         "//prow/prstatus:all-srcs",
         "//prow/pubsub/reporter:all-srcs",
+        "//prow/pubsub/subscriber:all-srcs",
         "//prow/repoowners:all-srcs",
-        "//prow/report:all-srcs",
         "//prow/sidecar:all-srcs",
         "//prow/slack:all-srcs",
         "//prow/spyglass:all-srcs",

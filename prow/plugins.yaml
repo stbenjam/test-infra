@@ -37,6 +37,10 @@ owners:
   - kubernetes-sigs/contributor-playground
   - helm/charts
 
+# TODO(fejta): delete these in before April
+use_deprecated_2018_implicit_self_approve_default_migrate_before_july_2019: true
+use_deprecated_2018_review_acts_as_approve_default_migrate_before_july_2019: true
+
 approve:
 - repos:
   - kubernetes/cloud-provider-aws
@@ -65,10 +69,9 @@ approve:
   - kubernetes/repo-infra
   - kubernetes/sig-release
   - kubernetes/steering
-  - kubernetes/test-infra
   - kubernetes/utils
   - kubernetes-incubator/ip-masq-agent
-  implicit_self_approve: true
+  require_self_approval: false
   lgtm_acts_as_approve: true
 - repos:
   - kubernetes/kops
@@ -77,14 +80,17 @@ approve:
   - kubernetes-csi
   - kubernetes-sigs
   - client-go/unofficial-docs
-  implicit_self_approve: true
+  require_self_approval: false
 - repos:
   - bazelbuild
-  implicit_self_approve: true
-  review_acts_as_approve: true
+  - kubernetes/community
+  - kubernetes/org
+  - kubernetes/test-infra
+  require_self_approval: false
+  ignore_review_state: false
 - repos:
   - helm/charts
-  implicit_self_approve: true
+  require_self_approval: false
   lgtm_acts_as_approve: true
 
 # Lower bounds in number of lines changed; XS is assumed to be zero.
@@ -95,6 +101,25 @@ size:
   xl:  500
   xxl: 1000
 
+label:
+  additional_labels:
+    # This label is used by the API review process
+    # https://git.k8s.io/community/sig-architecture/api-review-process.md#mechanics
+    - api-review
+    # These labels are used by Kubeflow
+    # TODO(https://github.com/kubernetes/test-infra/issues/8648): Switch
+    # to configuring prefixes and not individual labels once  that's supported.
+    - community/discussion
+    - community/maintenance
+    - community/question
+    - cuj/build-train-deploy
+    - cuj/multi-user
+    - platform/aws
+    - platform/azure
+    - platform/gcp
+    - platform/minikube
+    - platform/other
+
 lgtm:
 - repos:
   - bazelbuild
@@ -104,27 +129,6 @@ lgtm:
   store_tree_hash: true
 
 blockades:
-- repos:
-  - kubernetes/kubernetes
-  blockregexps:
-  - ^docs/man
-  exceptionregexps:
-  - ^docs/man/man1/.*\.1$
-  explanation: "Files under `docs/man` must be in the `man1` directory and have suffix `.1`."
-- repos:
-  - kubernetes/kubernetes
-  blockregexps:
-  - ^docs/user-guide
-  exceptionregexps:
-  - ^docs/user-guide/kubectl/kubectl.*\.md$
-  explanation: "Files under `docs/user-guide` must be in the `kubectl` directory and match pattern `kubectl*.md`."
-- repos:
-  - kubernetes/kubernetes
-  blockregexps:
-  - ^docs/yaml
-  exceptionregexps:
-  - ^docs/yaml/kubectl/kubectl_.*\.yaml$
-  explanation: "Files under `docs/yaml` must be in the `kubectl` directory and match pattern `kubectl_*.yaml`."
 - repos:
   - kubernetes/kubernetes
   blockregexps:
@@ -143,6 +147,11 @@ blockades:
   blockregexps:
   - ^keps/
   explanation: "KEPs have been relocated to [kubernetes/enhancements](https://git.k8s.io/enhancements/)! Please submit any updates there."
+- repos:
+  - kubernetes/enhancements
+  blockregexps:
+  - ^keps/NEXT_KEP_NUMBER$
+  explanation: "KEP numbers are obsolete. Please remove any changes to `NEXT_KEP_NUMBER` from this PR and ensure the KEP filename is the draft date and KEP title e.g., `YYYYMMDD-pony-controller.md`"
 
 blunderbuss:
   max_request_count: 2
@@ -160,6 +169,18 @@ slack:
     whitelist:
     - k8s-ci-robot
   - repos:
+    - kubernetes/enhancements
+    channels:
+    - sig-pm
+    whitelist:
+    - k8s-ci-robot
+  - repos:
+    - kubernetes/utils
+    channels:
+    - sig-architecture
+    whitelist:
+    - k8s-ci-robot
+  - repos:
     - kubernetes/kubernetes
     channels:
     - kubernetes-dev
@@ -167,10 +188,6 @@ slack:
     - k8s-ci-robot # future home of tide
     - k8s-release-robot # anago
     branch_whitelist:
-        release-1.8:
-            - jpbetz # 1.8 patch release manager
-        release-1.9:
-            - mbohlool # 1.9 patch release manager
         release-1.10:
             - maciekpytel # 1.10 patch release manager
         release-1.11:
@@ -178,9 +195,12 @@ slack:
         release-1.12:
             - feiskyer # 1.12 patch release manager
         release-1.13:
-            - dougm # 1.13 branch manager
-            - hoegaarden # 1.13 branch manager shadow
-            - idealhack # 1.13 branch manager shadow
+            - aleksandra-malinowska # 1.13 patch release team
+            - tpepper # 1.13 patch release team
+        release-1.14:
+            - aleksandra-malinowska # 1.14 patch release team
+            - tpepper # 1.14 patch release team
+            - hoegaarden # 1.14 branch manager
         feature-serverside-apply:
             - lavalamp # feature-serverside-apply "branch manager"
             - apelisse # feature-serverside-apply "branch manager"
@@ -199,6 +219,18 @@ repo_milestone:
     # curl -H "Authorization: token <token>" https://api.github.com/orgs/<org-name>/teams
     maintainers_id: 2460384
     maintainers_team: kubernetes-milestone-maintainers
+  'kubernetes-sigs/cluster-api':
+    maintainers_id: 3058957
+    maintainers_team: cluster-api-maintainers
+    maintainers_friendly_name: Cluster API Maintainers
+  'kubernetes-sigs/cluster-api-provider-aws':
+    maintainers_id: 2830895
+    maintainers_team: cluster-api-provider-aws-maintainers
+    maintainers_friendly_name: Cluster API Provider AWS Maintainers
+  'kubernetes-sigs/cluster-api-provider-azure':
+    maintainers_id: 3063852
+    maintainers_team: cluster-api-provider-azure-maintainers
+    maintainers_friendly_name: Cluster API Provider Azure Maintainers
 
 config_updater:
   maps:
@@ -318,6 +350,8 @@ plugins:
   - label
   - lgtm
   - lifecycle
+  - owners-label
+  - pony
   - shrug
   - sigmention
   - size
@@ -330,13 +364,17 @@ plugins:
   kubernetes/cloud-provider-aws:
   - milestone
   - milestonestatus
-  - owners-label
   - release-note
   - require-matching-label
   - welcome
   - trigger
 
   kubernetes/cloud-provider-azure:
+  - milestone
+  - milestonestatus
+  - release-note
+  - require-matching-label
+  - welcome
   - trigger
 
   kubernetes/cloud-provider-gcp:
@@ -354,7 +392,6 @@ plugins:
 
   kubernetes/community:
   - blockade
-  - owners-label
   - require-sig
   - trigger
 
@@ -364,9 +401,9 @@ plugins:
   kubernetes/enhancements:
   - blockade
   - milestone
-  - owners-label
   - require-sig
   - stage
+  - trigger
 
   kubernetes/examples:
   - trigger
@@ -385,13 +422,12 @@ plugins:
   - cherry-pick-unapproved
   - milestone
   - milestonestatus
-  - owners-label
+  - override
   - release-note
   - require-matching-label
   - trigger
 
   kubernetes/org:
-  - owners-label
   - trigger
 
   kubernetes/perf-tests:
@@ -405,19 +441,18 @@ plugins:
 
   kubernetes/sig-release:
   - blockade
-  - owners-label
+  - milestone
   - stage
 
   kubernetes/test-infra:
   - config-updater
   - milestone
-  - owners-label
   - override
   - trigger
   - welcome
 
-  kubernetes/website:
-  - owners-label
+  kubernetes/utils:
+  - override
 
   kubernetes-client:
   - approve
@@ -432,6 +467,8 @@ plugins:
   - label
   - lgtm
   - lifecycle
+  - owners-label
+  - pony
   - shrug
   - size
   - skip
@@ -452,6 +489,8 @@ plugins:
   - label
   - lgtm
   - lifecycle
+  - owners-label
+  - pony
   - shrug
   - size
   - skip
@@ -475,6 +514,8 @@ plugins:
   - label
   - lgtm
   - lifecycle
+  - owners-label
+  - pony
   - shrug
   - size
   - skip
@@ -504,6 +545,8 @@ plugins:
   - label
   - lgtm
   - lifecycle
+  - owners-label
+  - pony
   - shrug
   - size
   - skip
@@ -512,6 +555,7 @@ plugins:
   - yuks
 
   kubernetes-sigs/kind:
+  - override
   - trigger
   - welcome
 
@@ -526,8 +570,18 @@ plugins:
 
   kubernetes-sigs/cluster-api:
   - trigger
+  - milestone
 
   kubernetes-sigs/cluster-api-provider-aws:
+  - trigger
+  - milestone
+
+  kubernetes-sigs/cluster-api-provider-azure:
+  - milestone
+  - milestonestatus
+  - release-note
+  - require-matching-label
+  - welcome
   - trigger
 
   kubernetes-sigs/cluster-api-provider-digitalocean:
@@ -547,6 +601,9 @@ plugins:
   - welcome
 
   kubernetes-sigs/gcp-compute-persistent-disk-csi-driver:
+  - trigger
+
+  kubernetes-sigs/sig-storage-local-static-provisioner:
   - trigger
 
   kubernetes-sigs/gcp-filestore-csi-driver:
@@ -640,6 +697,10 @@ external_plugins:
   - name: needs-rebase
     events:
       - pull_request
+  kubernetes/cloud-provider-openstack:
+  - name: needs-rebase
+    events:
+      - pull_request
   kubernetes/kops:
   - name: needs-rebase
     events:
@@ -668,7 +729,19 @@ external_plugins:
   - name: needs-rebase
     events:
       - pull_request
+  kubernetes-sigs/cluster-api-provider-azure:
+  - name: needs-rebase
+    events:
+      - pull_request
   kubernetes-sigs/cluster-api-provider-digitalocean:
+  - name: needs-rebase
+    events:
+      - pull_request
+  kubernetes-sigs/cluster-api-provider-openstack:
+  - name: needs-rebase
+    events:
+      - pull_request
+  kubernetes-sigs/kind:
   - name: needs-rebase
     events:
       - pull_request

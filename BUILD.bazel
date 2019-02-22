@@ -1,29 +1,47 @@
 # gazelle:prefix k8s.io/test-infra
 # gazelle:proto disable_global
-load("@io_kubernetes_build//defs:run_in_workspace.bzl", "workspace_binary")
+# gazelle:exclude vendor/k8s.io/code-generator/_examples/
 
-filegroup(
-    name = "package-srcs",
-    srcs = glob(
-        ["**"],
-        exclude = [
-            "bazel-*/**",
-            ".git/**",
-            "*.db",
-            "*.gz",
-        ],
-    ),
-    visibility = ["//visibility:private"],
+load("@io_kubernetes_build//defs:run_in_workspace.bzl", "workspace_binary")
+load("@build_bazel_rules_nodejs//:defs.bzl", "nodejs_binary")
+
+workspace_binary(
+    name = "go",
+    cmd = "@go_sdk//:bin/go",
 )
 
 workspace_binary(
-    name = "dep",
-    cmd = "//vendor/github.com/golang/dep/cmd/dep",
+    name = "update-minor",
+    args = [
+        "get",
+        "-u",
+    ],
+    cmd = "@go_sdk//:bin/go",
+)
+
+workspace_binary(
+    name = "update-patch",
+    args = [
+        "get",
+        "-u=patch",
+    ],
+    cmd = "@go_sdk//:bin/go",
+)
+
+workspace_binary(
+    name = "gofmt",
+    cmd = "@go_sdk//:bin/gofmt",
+)
+
+workspace_binary(
+    name = "govet",
+    args = ["vet"],
+    cmd = "@go_sdk//:bin/go",
 )
 
 workspace_binary(
     name = "golint",
-    cmd = "//vendor/github.com/golang/lint/golint",
+    cmd = "@com_github_golang_lint//golint",
 )
 
 load("@bazel_gazelle//:def.bzl", "gazelle")
@@ -46,7 +64,7 @@ workspace_binary(
     args = [
         "--cfg-path=./hack/.kazelcfg.json",
     ],
-    cmd = "//vendor/github.com/kubernetes/repo-infra/kazel",
+    cmd = "@io_kubernetes_build//kazel",
 )
 
 workspace_binary(
@@ -56,18 +74,29 @@ workspace_binary(
         "--print-diff",
         "--cfg-path=./hack/.kazelcfg.json",
     ],
-    cmd = "//vendor/github.com/kubernetes/repo-infra/kazel",
+    cmd = "@io_kubernetes_build//kazel",
 )
 
-workspace_binary(
-    name = "gofmt",
-    cmd = "@go_sdk//:bin/gofmt",
+nodejs_binary(
+    name = "tslint",
+    data = [
+        "@npm//tslint",
+    ],
+    entry_point = "tslint/bin/tslint",
 )
 
-workspace_binary(
-    name = "govet",
-    args = ["vet"],
-    cmd = "@go_sdk//:bin/go",
+filegroup(
+    name = "package-srcs",
+    srcs = glob(
+        ["**"],
+        exclude = [
+            "bazel-*/**",
+            ".git/**",
+            "*.db",
+            "*.gz",
+        ],
+    ),
+    visibility = ["//visibility:private"],
 )
 
 filegroup(
@@ -85,10 +114,12 @@ filegroup(
         "//greenhouse:all-srcs",
         "//hack:all-srcs",
         "//images/bootstrap/barnacle:all-srcs",
+        "//images/kubekins-e2e:all-srcs",
         "//jenkins:all-srcs",
         "//jobs:all-srcs",
         "//kettle:all-srcs",
         "//kubetest:all-srcs",
+        "//kubetest2:all-srcs",
         "//label_sync:all-srcs",
         "//logexporter/cmd:all-srcs",
         "//maintenance/aws-janitor:all-srcs",
@@ -109,6 +140,12 @@ filegroup(
         "//vendor:all-srcs",
     ],
     tags = ["automanaged"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "test-infra-README",
+    srcs = ["README.md"],
     visibility = ["//visibility:public"],
 )
 
