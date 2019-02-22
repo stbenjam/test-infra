@@ -295,7 +295,7 @@ class BuildHandler(view_base.BaseHandler):
                 if len(x) == 2:
                     refs.append((x[0], x[1]))
                 else:
-                    refs.append((x[1], ''))
+                    refs.append((x[0], ''))
 
         work_namespace = ""
         if 'work-namespace' in metadata:
