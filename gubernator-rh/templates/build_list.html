@@ -29,7 +29,11 @@
 % elif started and 'timestamp' in started
 {{started['timestamp'] | timestamp}}
 % endif
-</a><br>
+</a>
+  % for issue in refs[loc]
+    <a class="ref" href="{{issue.url}}" title="{{issue.title}}">#{{issue.number}}</a>
+  % endfor
+<br>
 % endfor
 % if 'directory' in job_dir or '/pull/' not in job_dir
 <br>

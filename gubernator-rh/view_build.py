@@ -150,6 +150,8 @@ def normalize_metadata(started_future, finished_future):
                 metadata[k] = v
 
     # legacy behavior for normalization
+    if 'repos' in started and 'repos' not in metadata:
+        metadata['repos'] = started['repos']
     if 'repo' in metadata and 'repos' in metadata and metadata['repo'] and metadata['repos'] and metadata['repo'] in metadata['repos']:
         started['pull'] = metadata['repos'][metadata['repo']]
 
@@ -375,8 +377,11 @@ def build_list(job_dir, before):
     Args:
         job_dir: the GCS path holding the jobs
     Returns:
-        a list of [(build, finished)]. build is a string like "123",
-        finished is either None or a dict of the finished.json.
+        a list of [(build, loc, started, finished)].
+            build is a string like "123",
+            loc is the job directory and build,
+            started/finished are either None or a dict of the finished.json,
+        and a dict of {build: [issues...]} of xrefs.
     '''
 
     # /directory/ folders have a series of .txt files pointing at the correct location,
@@ -409,12 +414,21 @@ def build_list(job_dir, before):
             for build in builds
         ]
 
+    refs = {}
     output = []
     for build, loc, started_future, finished_future in build_futures:
         started, finished, metadata = normalize_metadata(started_future, finished_future)
+        issues = []
+        if "repos" in metadata and metadata["repos"]:
+            for repo in metadata['repos']:
+                for ref in metadata['repos'][repo].split(','):
+                    x = ref.split(':', 1)
+                    if len(x) == 2 and x[0].isdigit():
+                        issues.append({"number": int(x[0]), "title": "", "url": "https://github.com/%s/pull/%s" % (repo, x[0]) })
+        refs[loc] = issues
         output.append((str(build), loc, started, finished))
 
-    return output
+    return output, refs
 
 class BuildListHandler(view_base.BaseHandler):
     """Show a list of Builds for a Job."""
@@ -422,12 +436,14 @@ class BuildListHandler(view_base.BaseHandler):
         job_dir = '/%s/%s/' % (prefix, job)
         testgrid_query = testgrid.path_to_query(job_dir)
         before = self.request.get('before')
-        builds = build_list(job_dir, before)
+        builds, refs = build_list(job_dir, before)
         dir_link = re.sub(r'/pull/.*', '/directory/%s' % job, prefix)
+
         self.render('build_list.html',
                     dict(job=job, job_dir=job_dir, dir_link=dir_link,
                          testgrid_query=testgrid_query,
-                         builds=builds, before=before))
+                         builds=builds, refs=refs,
+                         before=before))
 
 
 class JobListHandler(view_base.BaseHandler):

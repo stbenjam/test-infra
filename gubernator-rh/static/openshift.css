@@ -17,6 +17,9 @@ body {
   overflow-wrap: break-word;
   min-width: 0;
 }
+#content a.ref {
+  margin-left: 4px;
+}
 #failures {
   padding: 0;
 }
