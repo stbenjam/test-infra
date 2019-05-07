@@ -104,6 +104,8 @@ def path_to_query(path):
 
     options = {}
     for dashboard in get_config().get('dashboards', []):
+        if 'dashboard_tab' not in dashboard:
+            continue
         dashboard_name = dashboard['name'][0]
         tabs = dashboard['dashboard_tab']
         for tab in tabs:
