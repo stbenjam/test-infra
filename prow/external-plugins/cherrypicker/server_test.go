@@ -324,7 +324,7 @@ func testCherryPickPR(clients localgit.Clients, t *testing.T) {
 				User: github.User{
 					Login: "approver",
 				},
-				Body: "/cherrypick release-1.6",
+				Body: "/cherrypick release-1.6 12345678",
 			},
 			{
 				User: github.User{
@@ -402,8 +402,14 @@ func testCherryPickPR(clients localgit.Clients, t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	var expectedFn = func(branch string) string {
-		expectedTitle := fmt.Sprintf("[%s] This is a fix for Y", branch)
+	var expectedFn = func(branch, bug string) string {
+		var expectedTitle string
+		if bug != "" {
+			expectedTitle = fmt.Sprintf("[%s] Bug %s: This is a fix for Y", branch, bug)
+		} else {
+			expectedTitle = fmt.Sprintf("[%s] This is a fix for Y", branch)
+		}
+
 		expectedBody := "This is an automated cherry-pick of #2"
 		expectedHead := fmt.Sprintf(botName+":"+cherryPickBranchFmt, 2, branch)
 		return fmt.Sprintf(expectedFmt, expectedTitle, expectedBody, expectedHead, branch)
@@ -417,13 +423,13 @@ func testCherryPickPR(clients localgit.Clients, t *testing.T) {
 	seenBranches := make(map[string]struct{})
 	for _, p := range ghc.prs {
 		pr := prToString(p)
-		if pr != expectedFn("release-1.5") && pr != expectedFn("release-1.6") {
-			t.Errorf("Unexpected PR:\n%s\nExpected to target one of the following branches: %v\n%s", pr, expectedBranches, expectedFn("release-1.5"))
+		if pr != expectedFn("release-1.5", "") && pr != expectedFn("release-1.6", "12345678") {
+			t.Errorf("Unexpected PR:\n%s\nExpected to target one of the following branches: %v\n%s", pr, expectedBranches, expectedFn("release-1.5", ""))
 		}
-		if pr == expectedFn("release-1.5") {
+		if pr == expectedFn("release-1.5", "") {
 			seenBranches["release-1.5"] = struct{}{}
 		}
-		if pr == expectedFn("release-1.6") {
+		if pr == expectedFn("release-1.6", "12345678") {
 			seenBranches["release-1.6"] = struct{}{}
 		}
 	}

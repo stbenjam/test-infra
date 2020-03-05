@@ -39,8 +39,9 @@ import (
 
 const pluginName = "cherrypick"
 
-var cherryPickRe = regexp.MustCompile(`(?m)^(?:/cherrypick|/cherry-pick)\s+(.+)$`)
+var cherryPickRe = regexp.MustCompile(`(?m)^(?:/cherrypick|/cherry-pick)\s+([^\s]+)\s?([^\s]+)?`)
 var releaseNoteRe = regexp.MustCompile(`(?s)(?:Release note\*\*:\s*(?:<!--[^<>]*-->\s*)?` + "```(?:release-note)?|```release-note)(.+?)```")
+var bugIdTitleRe = regexp.MustCompile(`[bB]ug \s+[:digit:]+:`)
 
 type githubClient interface {
 	AssignIssue(org, repo string, number int, logins []string) error
@@ -57,18 +58,26 @@ type githubClient interface {
 	ListOrgMembers(org, role string) ([]github.TeamMember, error)
 }
 
+type cherryPick struct {
+	user         string
+	member       bool
+	targetBranch string
+	comment      *github.IssueComment
+	bugId        string
+}
+
 // HelpProvider construct the pluginhelp.PluginHelp for this plugin.
 func HelpProvider(_ []config.OrgRepo) (*pluginhelp.PluginHelp, error) {
 	pluginHelp := &pluginhelp.PluginHelp{
 		Description: `The cherrypick plugin is used for cherrypicking PRs across branches. For every successful cherrypick invocation a new PR is opened against the target branch and assigned to the requester. If the parent PR contains a release note, it is copied to the cherrypick PR.`,
 	}
 	pluginHelp.AddCommand(pluginhelp.Command{
-		Usage:       "/cherrypick [branch]",
-		Description: "Cherrypick a PR to a different branch. This command works both in merged PRs (the cherrypick PR is opened immediately) and open PRs (the cherrypick PR opens as soon as the original PR merges).",
+		Usage:       "/cherrypick [branch] [bug]",
+		Description: "Cherrypick a PR to a different branch. This command works both in merged PRs (the cherrypick PR is opened immediately) and open PRs (the cherrypick PR opens as soon as the original PR merges). You may optionally specify a bug ID which will be included on the title of the new PR.",
 		Featured:    true,
 		// depends on how the cherrypick server runs; needs auth by default (--allow-all=false)
 		WhoCanUse: "Members of the trusted organization for the repo.",
-		Examples:  []string{"/cherrypick release-3.9", "/cherry-pick release-1.15"},
+		Examples:  []string{"/cherrypick release-3.9", "/cherry-pick release-1.15 12345678"},
 	})
 	return pluginHelp, nil
 }
@@ -151,10 +160,14 @@ func (s *Server) handleIssueComment(l *logrus.Entry, ic github.IssueCommentEvent
 		return nil
 	}
 
+	cp := &cherryPick{
+		user:    ic.Comment.User.Login,
+		comment: &ic.Comment,
+	}
+
 	org := ic.Repo.Owner.Login
 	repo := ic.Repo.Name
 	num := ic.Issue.Number
-	commentAuthor := ic.Comment.User.Login
 
 	l = l.WithFields(logrus.Fields{
 		github.OrgLogField:  org,
@@ -163,15 +176,19 @@ func (s *Server) handleIssueComment(l *logrus.Entry, ic github.IssueCommentEvent
 	})
 
 	cherryPickMatches := cherryPickRe.FindAllStringSubmatch(ic.Comment.Body, -1)
-	if len(cherryPickMatches) == 0 || len(cherryPickMatches[0]) != 2 {
+	if len(cherryPickMatches) == 0 || len(cherryPickMatches[0]) > 3 {
 		return nil
 	}
-	targetBranch := strings.TrimSpace(cherryPickMatches[0][1])
+	cp.targetBranch = strings.TrimSpace(cherryPickMatches[0][1])
+
+	if len(cherryPickMatches[0]) == 3 {
+		cp.bugId = cherryPickMatches[0][2]
+	}
 
 	if ic.Issue.State != "closed" {
 		if !s.allowAll {
 			// Only members should be able to do cherry-picks.
-			ok, err := s.ghc.IsMember(org, commentAuthor)
+			ok, err := s.ghc.IsMember(org, cp.user)
 			if err != nil {
 				return err
 			}
@@ -181,7 +198,7 @@ func (s *Server) handleIssueComment(l *logrus.Entry, ic github.IssueCommentEvent
 				return s.ghc.CreateComment(org, repo, num, plugins.FormatICResponse(ic.Comment, resp))
 			}
 		}
-		resp := fmt.Sprintf("once the present PR merges, I will cherry-pick it on top of %s in a new PR and assign it to you.", targetBranch)
+		resp := fmt.Sprintf("once the present PR merges, I will cherry-pick it on top of %s in a new PR and assign it to you.", cp.targetBranch)
 		s.log.WithFields(l.Data).Info(resp)
 		return s.ghc.CreateComment(org, repo, num, plugins.FormatICResponse(ic.Comment, resp))
 	}
@@ -202,15 +219,15 @@ func (s *Server) handleIssueComment(l *logrus.Entry, ic github.IssueCommentEvent
 	}
 
 	// TODO: Use a whitelist for allowed base and target branches.
-	if baseBranch == targetBranch {
-		resp := fmt.Sprintf("base branch (%s) needs to differ from target branch (%s)", baseBranch, targetBranch)
+	if baseBranch == cp.targetBranch {
+		resp := fmt.Sprintf("base branch (%s) needs to differ from target branch (%s)", baseBranch, cp.targetBranch)
 		s.log.WithFields(l.Data).Info(resp)
 		return s.ghc.CreateComment(org, repo, num, plugins.FormatICResponse(ic.Comment, resp))
 	}
 
 	if !s.allowAll {
 		// Only org members should be able to do cherry-picks.
-		ok, err := s.ghc.IsMember(org, commentAuthor)
+		ok, err := s.ghc.IsMember(org, cp.user)
 		if err != nil {
 			return err
 		}
@@ -223,9 +240,9 @@ func (s *Server) handleIssueComment(l *logrus.Entry, ic github.IssueCommentEvent
 
 	s.log.WithFields(l.Data).
 		WithField("requestor", ic.Comment.User.Login).
-		WithField("target_branch", targetBranch).
+		WithField("target_branch", cp.targetBranch).
 		Debug("Cherrypick request.")
-	return s.handle(l, ic.Comment.User.Login, &ic.Comment, org, repo, targetBranch, title, body, num)
+	return s.handle(l, cp, org, repo, title, body, num)
 }
 
 func (s *Server) handlePullRequest(l *logrus.Entry, pre github.PullRequestEvent) error {
@@ -257,25 +274,33 @@ func (s *Server) handlePullRequest(l *logrus.Entry, pre github.PullRequestEvent)
 		return err
 	}
 
-	// requestor -> target branch -> issue comment
-	requestorToComments := make(map[string]map[string]*github.IssueComment)
+	var cherryPicks []*cherryPick
 
 	// first look for our special comments
 	for i := range comments {
 		c := comments[i]
 		cherryPickMatches := cherryPickRe.FindAllStringSubmatch(c.Body, -1)
-		if len(cherryPickMatches) == 0 || len(cherryPickMatches[0]) != 2 {
+		if len(cherryPickMatches) == 0 || len(cherryPickMatches[0]) > 3 {
 			continue
 		}
-		// TODO: Support comments with multiple cherrypick invocations.
 		targetBranch := strings.TrimSpace(cherryPickMatches[0][1])
-		if requestorToComments[c.User.Login] == nil {
-			requestorToComments[c.User.Login] = make(map[string]*github.IssueComment)
+
+		var bugId string
+		if len(cherryPickMatches[0]) == 3 {
+			bugId = cherryPickMatches[0][2]
+			fmt.Println(bugId)
 		}
-		requestorToComments[c.User.Login][targetBranch] = &c
+
+		cherryPicks = append(cherryPicks, &cherryPick{
+			user:         c.User.Login,
+			comment:      &c,
+			bugId:        bugId,
+			targetBranch: targetBranch,
+			member:       false,
+		})
 	}
 
-	foundCherryPickComments := len(requestorToComments) != 0
+	foundCherryPickComments := len(cherryPicks) != 0
 
 	// now look for our special labels
 	labels, err := s.ghc.GetIssueLabels(org, repo, num)
@@ -283,15 +308,16 @@ func (s *Server) handlePullRequest(l *logrus.Entry, pre github.PullRequestEvent)
 		return err
 	}
 
-	if requestorToComments[pr.User.Login] == nil {
-		requestorToComments[pr.User.Login] = make(map[string]*github.IssueComment)
-	}
-
 	foundCherryPickLabels := false
 	labelPrefix := "cherrypick/"
 	for _, label := range labels {
 		if strings.HasPrefix(label.Name, labelPrefix) {
-			requestorToComments[pr.User.Login][label.Name[len(labelPrefix):]] = nil // leave this nil which indicates a label-initiated cherry-pick
+			cherryPicks = append(cherryPicks, &cherryPick{
+				user:         pr.User.Login,
+				targetBranch: label.Name[len(labelPrefix):],
+				member:       true,
+			})
+
 			foundCherryPickLabels = true
 		}
 	}
@@ -307,16 +333,12 @@ func (s *Server) handlePullRequest(l *logrus.Entry, pre github.PullRequestEvent)
 		if err != nil {
 			return err
 		}
-		for requestor := range requestorToComments {
-			isMember := false
+		for _, cherryPick := range cherryPicks {
 			for _, m := range members {
-				if requestor == m.Login {
-					isMember = true
+				if cherryPick.user == m.Login {
+					cherryPick.member = true
 					break
 				}
-			}
-			if !isMember {
-				delete(requestorToComments, requestor)
 			}
 		}
 	}
@@ -324,27 +346,30 @@ func (s *Server) handlePullRequest(l *logrus.Entry, pre github.PullRequestEvent)
 	// Handle multiple comments serially. Make sure to filter out
 	// comments targeting the same branch.
 	handledBranches := make(map[string]bool)
-	for requestor, branches := range requestorToComments {
-		for targetBranch, ic := range branches {
-			if targetBranch == baseBranch {
-				resp := fmt.Sprintf("base branch (%s) needs to differ from target branch (%s)", baseBranch, targetBranch)
-				s.log.WithFields(l.Data).Info(resp)
-				s.createComment(org, repo, num, ic, resp)
-				continue
-			}
-			if handledBranches[targetBranch] {
-				// Branch already handled. Skip.
-				continue
-			}
-			handledBranches[targetBranch] = true
-			s.log.WithFields(l.Data).
-				WithField("requestor", requestor).
-				WithField("target_branch", targetBranch).
-				Debug("Cherrypick request.")
-			err := s.handle(l, requestor, ic, org, repo, targetBranch, title, body, num)
-			if err != nil {
-				return err
-			}
+	for _, cherryPick := range cherryPicks {
+		if !cherryPick.member {
+			continue
+		}
+
+		if cherryPick.targetBranch == baseBranch {
+			resp := fmt.Sprintf("base branch (%s) needs to differ from target branch (%s)", baseBranch, cherryPick.targetBranch)
+			s.log.WithFields(l.Data).Info(resp)
+			s.ghc.CreateComment(org, repo, num, plugins.FormatICResponse(*cherryPick.comment, resp))
+			continue
+		}
+		if handledBranches[cherryPick.targetBranch] {
+			// Branch already handled. Skip.
+			continue
+		}
+
+		handledBranches[cherryPick.targetBranch] = true
+		s.log.WithFields(l.Data).
+			WithField("requestor", cherryPick.user).
+			WithField("target_branch", cherryPick.targetBranch).
+			Debug("Cherrypick request.")
+		err := s.handle(l, cherryPick, org, repo, title, body, num)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -352,7 +377,7 @@ func (s *Server) handlePullRequest(l *logrus.Entry, pre github.PullRequestEvent)
 
 var cherryPickBranchFmt = "cherry-pick-%d-to-%s"
 
-func (s *Server) handle(l *logrus.Entry, requestor string, comment *github.IssueComment, org, repo, targetBranch, title, body string, num int) error {
+func (s *Server) handle(l *logrus.Entry, cherryPick *cherryPick, org, repo, title, body string, num int) error {
 	if err := s.ensureForkExists(org, repo); err != nil {
 		return err
 	}
@@ -368,15 +393,15 @@ func (s *Server) handle(l *logrus.Entry, requestor string, comment *github.Issue
 			s.log.WithError(err).WithFields(l.Data).Error("Error cleaning up repo.")
 		}
 	}()
-	if err := r.Checkout(targetBranch); err != nil {
-		resp := fmt.Sprintf("cannot checkout %s: %v", targetBranch, err)
+	if err := r.Checkout(cherryPick.targetBranch); err != nil {
+		resp := fmt.Sprintf("cannot checkout %s: %v", cherryPick.targetBranch, err)
 		s.log.WithFields(l.Data).Info(resp)
-		return s.createComment(org, repo, num, comment, resp)
+		return s.createComment(org, repo, num, cherryPick.comment, resp)
 	}
 	s.log.WithFields(l.Data).WithField("duration", time.Since(startClone)).Info("Cloned and checked out target branch.")
 
 	// Fetch the patch from GitHub
-	localPath, err := s.getPatch(org, repo, targetBranch, num)
+	localPath, err := s.getPatch(org, repo, cherryPick.targetBranch, num)
 	if err != nil {
 		return err
 	}
@@ -393,7 +418,7 @@ func (s *Server) handle(l *logrus.Entry, requestor string, comment *github.Issue
 	}
 
 	// New branch for the cherry-pick.
-	newBranch := fmt.Sprintf(cherryPickBranchFmt, num, targetBranch)
+	newBranch := fmt.Sprintf(cherryPickBranchFmt, num, cherryPick.targetBranch)
 
 	// Check if that branch already exists, which means there is already a PR for that cherry-pick.
 	if r.BranchExists(newBranch) {
@@ -406,7 +431,7 @@ func (s *Server) handle(l *logrus.Entry, requestor string, comment *github.Issue
 			if pr.Head.Ref == fmt.Sprintf("%s:%s", s.botName, newBranch) {
 				resp := fmt.Sprintf("Looks like #%d has already been cherry picked in %s", num, pr.HTMLURL)
 				s.log.WithFields(l.Data).Info(resp)
-				return s.createComment(org, repo, num, comment, resp)
+				return s.createComment(org, repo, num, cherryPick.comment, resp)
 			}
 		}
 	}
@@ -418,9 +443,9 @@ func (s *Server) handle(l *logrus.Entry, requestor string, comment *github.Issue
 
 	// Apply the patch.
 	if err := r.Am(localPath); err != nil {
-		resp := fmt.Sprintf("#%d failed to apply on top of branch %q:\n```%v\n```", num, targetBranch, err)
+		resp := fmt.Sprintf("#%d failed to apply on top of branch %q:\n```%v\n```", num, cherryPick.targetBranch, err)
 		s.log.WithFields(l.Data).Info(resp)
-		return s.createComment(org, repo, num, comment, resp)
+		return s.createComment(org, repo, num, cherryPick.comment, resp)
 	}
 
 	push := r.ForcePush
@@ -431,33 +456,39 @@ func (s *Server) handle(l *logrus.Entry, requestor string, comment *github.Issue
 	if err := push(newBranch); err != nil {
 		resp := fmt.Sprintf("failed to push cherry-picked changes in GitHub: %v", err)
 		s.log.WithFields(l.Data).Info(resp)
-		return s.createComment(org, repo, num, comment, resp)
+		return s.createComment(org, repo, num, cherryPick.comment, resp)
 	}
 
 	// Open a PR in GitHub.
-	title = fmt.Sprintf("[%s] %s", targetBranch, title)
+	if cherryPick.bugId != "" {
+		newTitle := bugIdTitleRe.ReplaceAll([]byte(title), []byte{})
+		title = fmt.Sprintf("[%s] Bug %s: %s", cherryPick.targetBranch, cherryPick.bugId, newTitle)
+	} else {
+		title = fmt.Sprintf("[%s] %s", cherryPick.targetBranch, title)
+	}
+
 	cherryPickBody := fmt.Sprintf("This is an automated cherry-pick of #%d", num)
 	if s.prowAssignments {
-		cherryPickBody = fmt.Sprintf("%s\n\n/assign %s", cherryPickBody, requestor)
+		cherryPickBody = fmt.Sprintf("%s\n\n/assign %s", cherryPickBody, cherryPick.user)
 	}
 	if releaseNote := releaseNoteFromParentPR(body); len(releaseNote) != 0 {
 		cherryPickBody = fmt.Sprintf("%s\n\n%s", cherryPickBody, releaseNote)
 	}
 
 	head := fmt.Sprintf("%s:%s", s.botName, newBranch)
-	createdNum, err := s.ghc.CreatePullRequest(org, repo, title, cherryPickBody, head, targetBranch, true)
+	createdNum, err := s.ghc.CreatePullRequest(org, repo, title, cherryPickBody, head, cherryPick.targetBranch, true)
 	if err != nil {
 		resp := fmt.Sprintf("new pull request could not be created: %v", err)
 		s.log.WithFields(l.Data).Info(resp)
-		return s.createComment(org, repo, num, comment, resp)
+		return s.createComment(org, repo, num, cherryPick.comment, resp)
 	}
 	resp := fmt.Sprintf("new pull request created: #%d", createdNum)
 	s.log.WithFields(l.Data).Info(resp)
-	if err := s.createComment(org, repo, num, comment, resp); err != nil {
+	if err := s.createComment(org, repo, num, cherryPick.comment, resp); err != nil {
 		return err
 	}
 	if !s.prowAssignments {
-		if err := s.ghc.AssignIssue(org, repo, createdNum, []string{requestor}); err != nil {
+		if err := s.ghc.AssignIssue(org, repo, createdNum, []string{cherryPick.user}); err != nil {
 			s.log.WithFields(l.Data).Warningf("Cannot assign to new PR: %v", err)
 			// Ignore returning errors on failure to assign as this is most likely
 			// due to users not being members of the org so that they can't be assigned
